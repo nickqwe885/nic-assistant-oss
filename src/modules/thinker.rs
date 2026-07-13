@@ -236,21 +236,29 @@ fn build_profile_block(p: &ProfileConfig) -> String {
 /// reasoning or the tags. Tags are ASCII, so byte-index slicing stays on char
 /// boundaries.
 pub fn extract_answer(raw: &str) -> String {
-    if let Some(start) = raw.find("<answer>") {
-        let after = &raw[start + "<answer>".len()..];
-        let body = match after.find("</answer>") {
-            Some(end) => &after[..end],
-            None      => after, // truncated mid-answer — keep what we have
+    // A 1.5B model does not always close its tags in order. Live, "what is gravity"
+    // came back as "<answer>…</think>\n<answer>…", and reading the FIRST <answer>
+    // block shipped the reasoning — tags and all — straight to the user. So close
+    // the reasoning first, whatever shape it arrived in, and only then read the reply.
+    let mut s = match raw.rfind("</think>") {
+        Some(i) => raw[i + "</think>".len()..].to_string(),
+        // No closing tag. If reasoning started and never finished, there is no
+        // answer here at all — everything from <think> on is thought, not reply.
+        None => match raw.find("<think>") {
+            Some(i) if !raw.contains("<answer>") => raw[..i].to_string(),
+            _ => raw.to_string(),
+        },
+    };
+    if let Some(start) = s.find("<answer>") {
+        let after = &s[start + "<answer>".len()..];
+        s = match after.find("</answer>") {
+            Some(end) => after[..end].to_string(),
+            None      => after.to_string(), // truncated mid-answer — keep what we have
         };
-        return body.trim().to_string();
     }
-    // No <answer> tag: strip a <think> block if present, return the rest.
-    let mut s = raw.to_string();
-    if let Some(ts) = s.find("<think>") {
-        match s.find("</think>") {
-            Some(te) => { let end = (te + "</think>".len()).min(s.len()); s.replace_range(ts..end, ""); }
-            None     => { s.truncate(ts); } // unterminated <think> — drop from there on
-        }
+    // Whatever the model left lying around, a tag must never reach the user.
+    for tag in ["<think>", "</think>", "<answer>", "</answer>"] {
+        s = s.replace(tag, "");
     }
     s.trim().to_string()
 }
@@ -289,6 +297,20 @@ mod tests {
     fn unterminated_think_dropped() {
         // Still streaming the think block — nothing user-facing yet.
         assert_eq!(extract_answer("<think>still reasoning and not done"), "");
+    }
+
+    #[test]
+    fn tags_out_of_order_never_leak() {
+        // Live, "what is gravity" came back with the tags scrambled and the user
+        // was shown the reasoning plus a literal "</think>\n<answer>".
+        assert_eq!(
+            extract_answer(
+                "<answer>The force attracting two masses.</think>\n<answer>Gravity attracts objects with mass."
+            ),
+            "Gravity attracts objects with mass."
+        );
+        // Whatever survives, no tag reaches the user.
+        assert!(!extract_answer("<answer>a</think><answer>b</answer>").contains('<'));
     }
 
     // ── Phase 2: grounded → temp 0, chat → 0.3 ────────────────────────────────

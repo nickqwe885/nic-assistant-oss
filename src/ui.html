@@ -57,7 +57,10 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: rgba(9, 7, 22, 0.92);
+  /* THIS was the theme bug. #app covers the whole viewport, so a hardcoded dark
+     colour here painted over every theme — switching to Light changed only the
+     small details and the app stayed black. It must follow the theme. */
+  background: var(--bg);
   border-radius: var(--radius);
   border: 1px solid var(--border);
   overflow: hidden;
@@ -81,7 +84,7 @@ html, body {
   display: flex; align-items: center;
   height: 46px; padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,0.012);
+  background: var(--surface);   /* was a white wash — invisible on Light */
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
@@ -210,7 +213,7 @@ html, body {
 }
 #consent-yes { background: #7c6cf0; color: #fff; }
 #consent-yes:hover { background: #8a7bf5; }
-#consent-no { background: rgba(255,255,255,0.08); color: inherit; opacity: .8; }
+#consent-no { background: var(--surface2); color: inherit; opacity: .8; }
 #consent-no:hover { opacity: 1; }
 
 /* ── Settings panel ── */
@@ -306,8 +309,8 @@ html, body {
 .boot-bar.error .boot-bar-fill { width: 100%; background: #f87171; animation: none; }
 #messages::-webkit-scrollbar { width: 3px; }
 #messages::-webkit-scrollbar-track { background: transparent; }
-#messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 2px; }
-#messages::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.13); }
+#messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+#messages::-webkit-scrollbar-thumb:hover { background: var(--border2); }
 
 #welcome {
   display: flex; flex-direction: column;
@@ -1238,9 +1241,9 @@ function renderMarkdown(text) {
   s = s.replace(/\*\*\*(.+?)\*\*\*/gs, '<strong><em>$1</em></strong>');
   s = s.replace(/\*\*(.+?)\*\*/gs,     '<strong>$1</strong>');
   s = s.replace(/\*([^\s*][^*\n]*[^\s*])\*/g, '<em>$1</em>');
-  // Unordered lists
-  s = s.replace(/((?:^[ \t]*[-*] .+$\n?)+)/gm, m =>
-    '<ul>' + m.replace(/^[ \t]*[-*] (.+)$/gm, '<li>$1</li>') + '</ul>');
+  // Unordered lists — "•" too, since our own canned answers and the model both use it
+  s = s.replace(/((?:^[ \t]*[-*•] .+$\n?)+)/gm, m =>
+    '<ul>' + m.replace(/^[ \t]*[-*•] (.+)$/gm, '<li>$1</li>') + '</ul>');
   // Ordered lists
   s = s.replace(/((?:^\d+\. .+$\n?)+)/gm, m =>
     '<ol>' + m.replace(/^\d+\. (.+)$/gm, '<li>$1</li>') + '</ol>');
@@ -1302,10 +1305,16 @@ function addAiMsg() {
 // split across tokens never flashes. Tag-free text passes through unchanged
 // (fallback for a model that ignores the format, and for non-LLM streams).
 function stripThink(raw) {
-  return raw
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')  // completed reasoning blocks
+  // The model is small and sometimes scrambles its own tags — live it emitted
+  // "<answer>…</think>…<answer>…", which the pair-matching rules below sail past,
+  // leaving a literal "</think>" and the raw reasoning on screen. So cut at the
+  // LAST </think> first: whatever shape the reasoning arrived in, it ends there.
+  const close = raw.lastIndexOf('</think>');
+  let s = close >= 0 ? raw.slice(close + 8) : raw;
+  return s
     .replace(/<think>[\s\S]*$/i, '')            // reasoning still streaming → hide the rest
     .replace(/<\/?answer>/gi, '')               // drop the answer tags, keep their content
+    .replace(/<\/?think>/gi, '')                // belt and braces: never show a tag
     .replace(/^\s+/, '');                       // no leading blank left by the stripped think
 }
 
@@ -1421,18 +1430,31 @@ async function doSend() {
       const decoder = new TextDecoder();
       let   buf     = '';
       let   gotData = false;
+      // Proper SSE framing. A token that contains newlines is sent as SEVERAL
+      // `data:` lines belonging to ONE event, and the spec says to rejoin them
+      // with "\n". Treating every `data:` line as its own token silently ate every
+      // line break — bulleted answers arrived as one run-on paragraph.
+      let dataLines = [];
       outer: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
         const lines = buf.split('\n');
         buf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const token = line.slice(6);
-          if (token === '[DONE]') { gotData = true; break outer; }
-          appendToken(ai, token);
-          gotData = true;
+        for (let line of lines) {
+          if (line.endsWith('\r')) line = line.slice(0, -1);
+          if (line === '') {                       // blank line = end of event
+            if (dataLines.length) {
+              const token = dataLines.join('\n');
+              dataLines = [];
+              if (token === '[DONE]') { gotData = true; break outer; }
+              appendToken(ai, token);
+              gotData = true;
+            }
+            continue;
+          }
+          if (line.startsWith('data: '))     dataLines.push(line.slice(6));
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5));
         }
       }
       // If we got any data — success, no need to retry

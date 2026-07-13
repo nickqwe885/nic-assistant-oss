@@ -72,6 +72,20 @@ impl ContextCollector {
     /// Both run concurrently via tokio::join!. Surfer has a 20-second hard timeout.
     /// Returns `(lib_ctx, surf_ctx)`.
     pub async fn collect(&self, query: &str, offline: bool) -> (String, String) {
+        self.collect_with(query, offline, false).await
+    }
+
+    /// As `collect`, but `force_web` bypasses the Surfer's keyword allowlist.
+    /// A bare name ("donk") contains none of its trigger words, so a question about
+    /// a person never reached the internet and the model filled the gap with
+    /// fiction. When the caller already knows a person is being asked about, the
+    /// decision is made — go and look.
+    pub async fn collect_with(
+        &self,
+        query:     &str,
+        offline:   bool,
+        force_web: bool,
+    ) -> (String, String) {
         let librarian = self.librarian.clone();
         let surfer    = self.surfer.clone();
         let q         = query.to_string();
@@ -92,12 +106,14 @@ impl ContextCollector {
             if skip_web {
                 return String::new();
             }
-            match tokio::time::timeout(
-                Duration::from_secs(20),
-                surfer.maybe_search_web(&q, false),
-            )
-            .await
-            {
+            let search = async {
+                if force_web {
+                    surfer.search_web(&q).await
+                } else {
+                    surfer.maybe_search_web(&q, false).await
+                }
+            };
+            match tokio::time::timeout(Duration::from_secs(20), search).await {
                 Ok(Some(s)) => s,
                 Ok(None)    => String::new(),
                 Err(_)      => {
@@ -134,7 +150,14 @@ impl ContextCollector {
             scrubber::scrub(&strip_internal_markers(&clean_ocr_noise(lib_ctx)))
         };
 
-        let mut parts: Vec<String> = vec![format!("Date and time: {time_str}")];
+        // Label it unmistakably. Given a bare "Date and time: …", the model read it
+        // as its own training cutoff and answered "this may have changed since my
+        // last update on July 13th 2026 at 10:37 AM" — nonsense that reads like a
+        // broken product.
+        let mut parts: Vec<String> = vec![format!(
+            "Right now it is {time_str} for the user. This is the current clock time — \
+             it is NOT your knowledge cutoff, so never describe it as your last update."
+        )];
 
         if !lib_clean.is_empty() {
             parts.push(format!("Screen history:\n{lib_clean}"));

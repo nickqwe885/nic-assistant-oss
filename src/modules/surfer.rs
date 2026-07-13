@@ -151,10 +151,41 @@ pub fn fetch_web_results_sync(query: &str) -> Vec<WebResult> {
 /// Resolves a YouTube search to its FIRST video's watch URL by scraping the
 /// results page (no API key). Returns `None` on any failure so the caller can
 /// fall back to opening the plain search page. Blocking — call off the runtime.
+/// Words that mean "their newest upload", not part of the thing being searched.
+/// "qewbite last video" searched literally and returned an Avengers trailer —
+/// the filler polluted the query. Stripping it and sorting YouTube by upload date
+/// returns what the user actually asked for: that creator's latest video.
+const LATEST_MARKERS: &[&str] = &[
+    "last video", "latest video", "newest video", "new video", "recent video",
+    "последнее видео", "новое видео", "свежее видео",
+];
+
 pub fn first_youtube_watch_url(query: &str) -> Option<String> {
+    let ql = query.to_lowercase();
+    let wants_latest = LATEST_MARKERS.iter().any(|m| ql.contains(m));
+
+    let search_term = if wants_latest {
+        let mut t = ql.clone();
+        for m in LATEST_MARKERS {
+            t = t.replace(m, " ");
+        }
+        // Drop leftover connective words so only the creator's name is searched.
+        let cleaned: Vec<&str> = t
+            .split_whitespace()
+            .filter(|w| !matches!(*w, "his" | "her" | "their" | "the" | "a" | "of" | "s"))
+            .collect();
+        let c = cleaned.join(" ").trim().to_string();
+        if c.is_empty() { query.to_string() } else { c }
+    } else {
+        query.to_string()
+    };
+
     let url = format!(
-        "https://www.youtube.com/results?search_query={}",
-        urlencoding::encode(query)
+        "https://www.youtube.com/results?search_query={}{}",
+        urlencoding::encode(&search_term),
+        // sp=CAI%3D is YouTube's "Sort by: Upload date" filter (base64 "CAI="),
+        // so the first hit is that creator's newest upload.
+        if wants_latest { "&sp=CAI%3D" } else { "" }
     );
     let body = ureq::get(&url)
         .set("User-Agent", UA)
@@ -300,6 +331,18 @@ impl Surfer {
         if !Self::needs_internet(query) {
             return None;
         }
+        self.search_web(query).await
+    }
+
+    /// Search unconditionally — the caller has already decided the web is needed.
+    ///
+    /// `needs_internet` is a keyword allowlist ("who is", "price", "news"…), and a
+    /// bare name trips none of them. Live, "tell me about donk" therefore never
+    /// reached the internet at all: the model answered from its own imagination
+    /// (a Donkey Kong biography, then an invented Team Liquid player) while the one
+    /// source that actually knew the answer was never consulted. When the API knows
+    /// the user is asking about a person, it says so — and we go and look.
+    pub async fn search_web(&self, query: &str) -> Option<String> {
         info!("[Surfer] Web search…");
         match self.fetch_snippets(query).await {
             Ok(snippets) if !snippets.is_empty() => {

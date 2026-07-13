@@ -676,6 +676,19 @@ fn no_bluff_person_prompt(name: &str) -> String {
     )
 }
 
+/// The same refusal for a subject that may not be a person ("tell me about donk"
+/// could be anyone or anything). Fires when nothing — screen memory OR the web —
+/// mentions it, which is exactly when the model starts inventing: live, a
+/// Counter-Strike player came back as a Donkey Kong biography.
+fn no_bluff_subject_prompt(name: &str) -> String {
+    format!(
+        "I found nothing on {name} — not in your screen memory, and not on the web \
+         just now — so I won't guess.\n\n\
+         Tell me who or what they are in a few words and I'll remember it, or ask me \
+         again in a moment and I'll retry the search."
+    )
+}
+
 /// Shown when NIC is asked about a specific person it has no grounded facts for.
 #[allow(dead_code)]
 const NO_BLUFF_PERSON: &str =
@@ -983,24 +996,36 @@ async fn handle_query(
     let q_low   = query.to_lowercase();
     let offline = req.offline && !force_online.iter().any(|kw| q_low.contains(*kw));
 
-    let (lib_ctx, surf_ctx) = state.collector.collect(&query, offline).await;
-
-    // Track who is being discussed (mirrors the streaming path).
-    if let Some(name) = entity_in_question(&query) {
+    // Track who is being discussed, then search for THEM — not for the sentence
+    // they were mentioned in (mirrors the streaming path).
+    let subject = entity_in_question(&query);
+    if let Some(name) = &subject {
         let mut e = state.entity.lock().await;
-        if e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(&name)) {
+        if e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(name)) {
             *e = Some(EntityCtx { name: name.clone(), facts: Vec::new() });
         }
     }
+    let collect_query = match state.entity.lock().await.as_ref() {
+        Some(e) if subject.is_some() => e.search_term(),
+        _ => query.clone(),
+    };
 
-    // Never bluff about a named person the facts don't actually mention.
-    if let Some(name) = person_in_question(&query) {
-        if !person_is_grounded(&name, &lib_ctx, &surf_ctx) {
+    let (lib_ctx, surf_ctx) = state.collector
+        .collect_with(&collect_query, offline, subject.is_some())
+        .await;
+
+    // Never bluff about a subject no source mentions. We already forced a web search
+    // for it, so "ungrounded" now means nothing anywhere knows this name — or the web
+    // was throttled. Either way the model's next sentence would be invention.
+    if let Some(name) = &subject {
+        if !person_is_grounded(name, &lib_ctx, &surf_ctx) {
             tracing::info!("[NoBluff] «{}» not in any facts — asking the user instead", name);
-            return Ok(Json(QueryResponse {
-                answer: no_bluff_person_prompt(&name),
-                elapsed_ms: start.elapsed().as_millis(),
-            }));
+            let answer = if person_in_question(&query).is_some() {
+                no_bluff_person_prompt(name)
+            } else {
+                no_bluff_subject_prompt(name)
+            };
+            return Ok(Json(QueryResponse { answer, elapsed_ms: start.elapsed().as_millis() }));
         }
     }
 
@@ -1254,32 +1279,55 @@ async fn handle_query_stream(
         // ("Rust?") isn't wrongly anchored to the previous topic.
         let is_followup = prev.is_some() && (has_ref || (wc <= 2 && has_cyrillic));
 
-        let collect_query = match (&prev, is_followup) {
-            (Some((prev_q, _)), true) => format!("{} — {}", prev_q, query),
-            _ => query.clone(),
-        };
-
-        let (lib_ctx, surf_ctx) = collector.collect(&collect_query, offline).await;
-
         // Remember WHO is being discussed, so a later "his last video" resolves —
-        // and so the user can teach us about them ("he is a dota 2 player").
-        if let Some(name) = entity_in_question(&query) {
+        // and so the user can teach us about them ("he is a dota 2 player"). This
+        // has to happen BEFORE we go looking for facts: the subject is also what we
+        // search WITH.
+        let subject = entity_in_question(&query);
+        if let Some(name) = &subject {
             let mut e = entity_ctx.lock().await;
-            let changed = e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(&name));
+            let changed = e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(name));
             if changed {
                 *e = Some(EntityCtx { name: name.clone(), facts: Vec::new() });
             }
         }
+        let entity_now = entity_ctx.lock().await.clone();
 
-        // Never bluff about a named person the facts don't actually mention.
-        if let Some(name) = person_in_question(&query) {
-            if !person_is_grounded(&name, &lib_ctx, &surf_ctx) {
+        // What we actually SEARCH with. Handing the web the raw sentence — "hi
+        // assistant could u tell me about donk" — gets a conversational blob back,
+        // the answer is grounded in nothing, and the model falls through to its own
+        // training: live, it produced a Donkey Kong biography, then an invented
+        // American Team Liquid player. Search for the SUBJECT instead, enriched with
+        // whatever the user has told us ("donk cs 2 player Team Spirit").
+        let (collect_query, force_web) = match (&entity_now, &prev) {
+            (Some(e), _) if subject.is_some() => (e.search_term(), true),
+            // A pronoun follow-up ("is he top 1?") — the web needs the name, not "he".
+            (Some(e), _) if is_followup && has_ref => {
+                (format!("{} {}", e.search_term(), query), true)
+            }
+            (_, Some((prev_q, _))) if is_followup => (format!("{} — {}", prev_q, query), false),
+            _ => (query.clone(), false),
+        };
+
+        let (lib_ctx, surf_ctx) = collector
+            .collect_with(&collect_query, offline, force_web)
+            .await;
+
+        // Never bluff about a subject no source mentions. The web was already searched
+        // for it explicitly, so "ungrounded" means nobody knows this name — or the
+        // search was throttled. Both are reasons to ask, not to invent.
+        if let Some(name) = &subject {
+            if !person_is_grounded(name, &lib_ctx, &surf_ctx) {
                 tracing::info!("[NoBluff] «{}» not in any facts — refusing to guess", name);
                 // Record the turn anyway. The user still NAMED someone, so a
                 // follow-up ("open video about him") must resolve to that person —
                 // without this, the pronoun bound to an older, unrelated question
                 // and produced «video about i just doing».
-                let msg = no_bluff_person_prompt(&name);
+                let msg = if person_in_question(&query).is_some() {
+                    no_bluff_person_prompt(name)
+                } else {
+                    no_bluff_subject_prompt(name)
+                };
                 {
                     let mut last = last_exchange.lock().await;
                     *last = Some((query.clone(), msg.clone()));
