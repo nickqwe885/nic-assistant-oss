@@ -16,7 +16,7 @@ the things only a live run can prove (real LLM, GPU, OS automation, WebView). Ta
       file picker appears, OR it downloads. App reaches **online** afterwards.
 - [ ] (existing install) loads the configured model without prompting.
 
-## 2. Chat & inference (Шаг 3 / §3)
+## 2. Chat & inference
 - [ ] A question streams a reply; the `<think>` block is **hidden**, only the answer shows.
 - [ ] **Regression guard:** "who is Isaac Newton" → facts about Newton, **not** a
       self-description.
@@ -29,14 +29,14 @@ the things only a live run can prove (real LLM, GPU, OS automation, WebView). Ta
 - [ ] **Phase-2 check:** a grounded answer (after a web/screen lookup) reads
       deterministically — re-asking gives the same wording (temp 0 on the reader branch).
 
-## 4. РУЛИТ — Pilot, English commands
+## 4. It controls the PC — Pilot commands
 - [ ] "open youtube" / "open calculator" / "open notepad" → opens it, English confirm.
 - [ ] "volume up" / "volume down" / "mute" → changes volume.
 - [ ] "next" / "pause" / "play AC DC" → media control / plays the named track.
 - [ ] "screenshot" → saves to Desktop, English confirm.
 - [ ] "search youtube for lofi" / "google rust async" → opens / in-chat results.
 
-## 5. ПОМНИТ — memory recall
+## 5. It remembers — memory recall
 - [ ] Use the PC for a bit (browser, an app), then ask "what did I do recently?" →
       a concrete English retelling of the actual sites/apps.
 - [ ] "find the site I looked at" → returns a real recent page.

@@ -111,5 +111,5 @@ role = ""
 # Active projects, e.g. ["NIC-Assistant", "my-startup"]
 projects = []
 
-# Answer style preferences, e.g. "Краткие технические ответы на русском"
+# Answer style preferences, e.g. "Short, technical answers"
 preferences = ""

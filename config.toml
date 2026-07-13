@@ -51,4 +51,4 @@ cpu_limit_pct  = 90.0
 # Language defaults to English (no OS auto-detection). Set explicitly to opt in
 # to a localized UI, e.g. language = "Russian". City is auto-detected if empty.
 # language = "English"
-# city     = "Астана"
+# city     = "Astana"
