@@ -273,15 +273,21 @@ impl Default for LibrarianConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct SecurityConfig {
-    pub encrypt_archives: bool,
-    pub key_file:         PathBuf,
+    /// AES-256-GCM at-rest encryption of the memory store: the hot LanceDB text
+    /// fields AND the cold archive files. ON by default — a screen-memory product
+    /// shipping its memory in plaintext is not a privacy product. The old name
+    /// `encrypt_archives` is accepted so existing configs keep working.
+    #[serde(alias = "encrypt_archives")]
+    pub encrypt_memory: bool,
+    pub key_file:       PathBuf,
     /// If non-empty, non-localhost requests must include `X-Api-Key: <value>` header.
     /// Leave empty (default) to disable — UI on localhost always works without a key.
-    pub api_key:          String,
+    pub api_key:        String,
 }
 
 fn default_key_path() -> PathBuf {
-    // Store key outside the data directory so the archive and key are never co-located.
+    // Store key outside the data directory so the memory store and key are never
+    // co-located (people zip their data folder into bug reports).
     if let Ok(appdata) = std::env::var("APPDATA") {
         return PathBuf::from(appdata).join("nic-assistant").join(".nic_key");
     }
@@ -292,7 +298,7 @@ fn default_key_path() -> PathBuf {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            encrypt_archives: false,
+            encrypt_memory: true,
             key_file: default_key_path(),
             api_key:  String::new(),
         }
@@ -502,9 +508,17 @@ mod tests {
     }
 
     #[test]
-    fn app_config_default_encrypt_archives_false() {
+    fn app_config_default_encrypt_memory_on() {
+        // A screen-memory product must ship with its memory encrypted by default.
         let cfg = AppConfig::default();
-        assert!(!cfg.security.encrypt_archives);
+        assert!(cfg.security.encrypt_memory);
+    }
+
+    #[test]
+    fn legacy_encrypt_archives_key_still_parses() {
+        // Configs written before the rename must keep working.
+        let cfg: AppConfig = toml::from_str("[security]\nencrypt_archives = false\n").unwrap();
+        assert!(!cfg.security.encrypt_memory);
     }
 
     #[test]

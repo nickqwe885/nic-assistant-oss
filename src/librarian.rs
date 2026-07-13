@@ -179,7 +179,7 @@ impl Embedder {
     }
 }
 
-// ── AES-256-GCM archive cipher ────────────────────────────────────────────────
+// ── AES-256-GCM memory cipher ─────────────────────────────────────────────────
 
 struct ArchiveCipher {
     key: [u8; 32],
@@ -215,15 +215,156 @@ impl ArchiveCipher {
     }
 }
 
+// ── At-rest field encryption for the hot store ───────────────────────────────
+//
+// LanceDB has no native at-rest encryption, so sensitive TEXT fields (the OCR
+// payload, window titles) are sealed at the storage boundary and opened on
+// read. Marked with a prefix so pre-encryption rows keep reading as plaintext —
+// an existing install upgrades in place, new rows are ciphertext, and nothing
+// ever migrates destructively. Embedding vectors stay unencrypted: they are
+// needed for search and reveal at most a fuzzy semantic direction, never text.
+
+const ENC_MARKER: &str = "enc1:";
+
+/// Encrypt a field for storage. No cipher (encryption disabled) → passthrough.
+fn seal_field(cipher: Option<&ArchiveCipher>, s: &str) -> String {
+    match cipher {
+        Some(c) => match c.encrypt(s) {
+            Ok(ct) => format!("{ENC_MARKER}{ct}"),
+            Err(e) => {
+                // Never lose the user's data to a crypto hiccup — store plaintext.
+                warn!("[Vault] seal failed ({e}); storing field unencrypted");
+                s.to_string()
+            }
+        },
+        None => s.to_string(),
+    }
+}
+
+/// Decrypt a stored field. Plaintext rows (no marker) pass through unchanged;
+/// an encrypted row without a working key yields an empty string — the row is
+/// unreadable, but the app keeps running.
+fn open_field(cipher: Option<&ArchiveCipher>, s: &str) -> String {
+    let Some(ct) = s.strip_prefix(ENC_MARKER) else { return s.to_string() };
+    match cipher {
+        Some(c) => c.decrypt(ct).unwrap_or_else(|e| {
+            warn!("[Vault] open failed ({e}); row unreadable");
+            String::new()
+        }),
+        None => {
+            warn!("[Vault] encrypted row found but encryption is disabled in config");
+            String::new()
+        }
+    }
+}
+
+// ── DPAPI key wrapping (Windows) ──────────────────────────────────────────────
+//
+// A key sitting in a readable file next to the data is a lock with the key
+// taped to it. On Windows the key file holds a DPAPI-wrapped blob instead:
+// only THIS user on THIS machine can unwrap it — the same model Chrome uses
+// for cookies. Raw extern, no new crate features (project convention, §8d).
+
+#[cfg(windows)]
+mod dpapi {
+    use anyhow::{anyhow, Result};
+
+    #[repr(C)]
+    struct DataBlob {
+        cb_data: u32,
+        pb_data: *mut u8,
+    }
+
+    const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
+
+    #[link(name = "crypt32")]
+    extern "system" {
+        fn CryptProtectData(
+            data_in: *const DataBlob, descr: *const u16, entropy: *const DataBlob,
+            reserved: *mut core::ffi::c_void, prompt: *mut core::ffi::c_void,
+            flags: u32, data_out: *mut DataBlob,
+        ) -> i32;
+        fn CryptUnprotectData(
+            data_in: *const DataBlob, descr: *mut *mut u16, entropy: *const DataBlob,
+            reserved: *mut core::ffi::c_void, prompt: *mut core::ffi::c_void,
+            flags: u32, data_out: *mut DataBlob,
+        ) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(mem: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
+    }
+
+    fn call(protect: bool, input: &[u8]) -> Result<Vec<u8>> {
+        let blob_in = DataBlob { cb_data: input.len() as u32, pb_data: input.as_ptr() as *mut u8 };
+        let mut blob_out = DataBlob { cb_data: 0, pb_data: std::ptr::null_mut() };
+        let ok = unsafe {
+            if protect {
+                CryptProtectData(&blob_in, std::ptr::null(), std::ptr::null(),
+                    std::ptr::null_mut(), std::ptr::null_mut(),
+                    CRYPTPROTECT_UI_FORBIDDEN, &mut blob_out)
+            } else {
+                CryptUnprotectData(&blob_in, std::ptr::null_mut(), std::ptr::null(),
+                    std::ptr::null_mut(), std::ptr::null_mut(),
+                    CRYPTPROTECT_UI_FORBIDDEN, &mut blob_out)
+            }
+        };
+        if ok == 0 || blob_out.pb_data.is_null() {
+            return Err(anyhow!("DPAPI {} failed", if protect { "protect" } else { "unprotect" }));
+        }
+        let out = unsafe {
+            std::slice::from_raw_parts(blob_out.pb_data, blob_out.cb_data as usize).to_vec()
+        };
+        unsafe { LocalFree(blob_out.pb_data as *mut core::ffi::c_void) };
+        Ok(out)
+    }
+
+    pub fn protect(data: &[u8]) -> Result<Vec<u8>>   { call(true, data) }
+    pub fn unprotect(data: &[u8]) -> Result<Vec<u8>> { call(false, data) }
+}
+
+/// Serialises the key for its file: DPAPI-wrapped on Windows, plain elsewhere.
+fn encode_key_for_file(key: &[u8; 32]) -> String {
+    #[cfg(windows)]
+    if let Ok(blob) = dpapi::protect(key) {
+        return format!("dpapi1:{}", BASE64.encode(&blob));
+    }
+    BASE64.encode(key)
+}
+
 fn load_or_create_key(path: &Path) -> Result<[u8; 32]> {
-    if path.exists() {
-        let s     = std::fs::read_to_string(path)?;
-        let bytes = BASE64.decode(s.trim()).map_err(|e| anyhow!("Key decode: {}", e))?;
+    fn to_arr(bytes: &[u8], path: &Path) -> Result<[u8; 32]> {
         if bytes.len() != 32 {
             return Err(anyhow!("Invalid key length in {}", path.display()));
         }
         let mut key = [0u8; 32];
-        key.copy_from_slice(&bytes);
+        key.copy_from_slice(bytes);
+        Ok(key)
+    }
+
+    if path.exists() {
+        let s = std::fs::read_to_string(path)?;
+        let t = s.trim();
+        if let Some(b64) = t.strip_prefix("dpapi1:") {
+            // DPAPI-wrapped key: only this Windows user on this machine unwraps it.
+            #[cfg(windows)]
+            {
+                let blob  = BASE64.decode(b64).map_err(|e| anyhow!("Key decode: {}", e))?;
+                let bytes = dpapi::unprotect(&blob)
+                    .map_err(|e| anyhow!("key at {} cannot be unwrapped (different \
+                        user/machine?): {}", path.display(), e))?;
+                return to_arr(&bytes, path);
+            }
+            #[cfg(not(windows))]
+            return Err(anyhow!("DPAPI key at {} on a non-Windows OS", path.display()));
+        }
+        // Legacy raw key (pre-DPAPI): keep working, and rewrap the file in place
+        // so the plaintext key stops existing on disk.
+        let bytes = BASE64.decode(t).map_err(|e| anyhow!("Key decode: {}", e))?;
+        let key = to_arr(&bytes, path)?;
+        if std::fs::write(path, encode_key_for_file(&key)).is_ok() {
+            tracing::info!("[Vault] legacy raw key at {} rewrapped with DPAPI", path.display());
+        }
         Ok(key)
     } else {
         let mut key = [0u8; 32];
@@ -231,8 +372,8 @@ fn load_or_create_key(path: &Path) -> Result<[u8; 32]> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, BASE64.encode(&key))?;
-        tracing::info!("Generated new archive key at {}", path.display());
+        std::fs::write(path, encode_key_for_file(&key))?;
+        tracing::info!("[Vault] generated new memory key at {}", path.display());
         Ok(key)
     }
 }
@@ -303,6 +444,11 @@ pub struct Librarian {
 }
 
 impl Librarian {
+    /// Encrypt a text field for storage (passthrough when encryption is off).
+    fn seal(&self, s: &str) -> String { seal_field(self.cipher.as_deref(), s) }
+    /// Decrypt a stored text field (plaintext legacy rows pass through).
+    fn open(&self, s: &str) -> String { open_field(self.cipher.as_deref(), s) }
+
     // ── Constructors ──────────────────────────────────────────────────────────
 
     /// Constructor driven by `AppConfig` + a shared LLM engine.
@@ -310,7 +456,7 @@ impl Librarian {
         cfg: &crate::config::AppConfig,
         llm: Arc<std::sync::Mutex<LlmEngine>>,
     ) -> Result<Self> {
-        let key_path = if cfg.security.encrypt_archives {
+        let key_path = if cfg.security.encrypt_memory {
             Some(cfg.security.key_file.clone())
         } else {
             None
@@ -321,7 +467,7 @@ impl Librarian {
             cfg.librarian.db_path.clone(),
             cfg.librarian.archive_path.clone(),
             cfg.librarian.embed_cache_size,
-            cfg.security.encrypt_archives,
+            cfg.security.encrypt_memory,
             key_path,
         ).await
     }
@@ -332,7 +478,7 @@ impl Librarian {
         db_path:          PathBuf,
         archive_path:     PathBuf,
         embed_cache_size: usize,
-        encrypt_archives: bool,
+        encrypt_memory:   bool,
         key_path:         Option<PathBuf>,
     ) -> Result<Self> {
         let embedder_read  = Embedder::new(&embedder_dir)?;
@@ -376,10 +522,28 @@ impl Librarian {
 
         std::fs::create_dir_all(&archive_path)?;
 
-        let cipher = if encrypt_archives {
-            let kp  = key_path.unwrap_or_else(|| PathBuf::from("data/.nic_key"));
-            let key = load_or_create_key(&kp)?;
-            Some(Arc::new(ArchiveCipher::new(key)))
+        // Never brick boot over the key. If the file can't be unwrapped (copied
+        // from another machine, Windows profile rebuilt), the old ciphertext is
+        // unrecoverable anyway — quarantine the dead key, mint a fresh one, and
+        // keep running: old encrypted rows read as empty, new data is protected.
+        let cipher = if encrypt_memory {
+            let kp = key_path.unwrap_or_else(|| PathBuf::from("data/.nic_key"));
+            match load_or_create_key(&kp) {
+                Ok(key) => Some(Arc::new(ArchiveCipher::new(key))),
+                Err(e) => {
+                    tracing::error!("[Vault] key at {} unusable ({e:#}); quarantining \
+                        it and generating a fresh key", kp.display());
+                    let _ = std::fs::rename(&kp, kp.with_extension("key.bad"));
+                    match load_or_create_key(&kp) {
+                        Ok(key) => Some(Arc::new(ArchiveCipher::new(key))),
+                        Err(e2) => {
+                            tracing::error!("[Vault] key creation failed too ({e2:#}); \
+                                running WITHOUT at-rest encryption");
+                            None
+                        }
+                    }
+                }
+            }
         } else {
             None
         };
@@ -505,13 +669,18 @@ impl Librarian {
             Arc::new(Field::new("item", DataType::Float32, true)),
             384, values, None,
         );
+        // Window titles carry document/video names; the summary is raw OCR. Both
+        // are sealed at rest. app_name ("firefox") stays plain — near-zero value
+        // to an attacker, and it keeps logs and filters readable.
+        let win_sealed = self.seal(window_title);
+        let txt_sealed = self.seal(text_summary);
         let batch = RecordBatch::try_new(schema, vec![
-            Arc::new(StringArray::from(vec![id.as_str()]))         as ArrayRef,
-            Arc::new(TimestampMicrosecondArray::from(vec![ts]))    as ArrayRef,
-            Arc::new(StringArray::from(vec![app_name]))            as ArrayRef,
-            Arc::new(StringArray::from(vec![window_title]))        as ArrayRef,
-            Arc::new(vector)                                       as ArrayRef,
-            Arc::new(StringArray::from(vec![text_summary]))        as ArrayRef,
+            Arc::new(StringArray::from(vec![id.as_str()]))          as ArrayRef,
+            Arc::new(TimestampMicrosecondArray::from(vec![ts]))     as ArrayRef,
+            Arc::new(StringArray::from(vec![app_name]))             as ArrayRef,
+            Arc::new(StringArray::from(vec![win_sealed.as_str()]))  as ArrayRef,
+            Arc::new(vector)                                        as ArrayRef,
+            Arc::new(StringArray::from(vec![txt_sealed.as_str()]))  as ArrayRef,
         ])?;
         self.table.add(vec![batch]).execute().await?;
 
@@ -547,8 +716,8 @@ impl Librarian {
                 Some(a) => a, None => continue,
             };
             for i in 0..batch.num_rows() {
-                let data = dat_arr.value(i);
-                if !is_screen_event(data) { continue; }
+                let data = self.open(dat_arr.value(i));
+                if !is_screen_event(&data) { continue; }
                 let ts = ts_arr.value(i);
                 if best.as_ref().map_or(true, |(t, _)| ts > *t) {
                     best = Some((ts, data.to_string()));
@@ -577,8 +746,8 @@ impl Librarian {
                 Some(a) => a, None => continue,
             };
             for i in 0..batch.num_rows() {
-                let data = dat_arr.value(i);
-                if !is_screen_event(data) { continue; }
+                let data = self.open(dat_arr.value(i));
+                if !is_screen_event(&data) { continue; }
                 all.push((ts_arr.value(i), data.to_string()));
             }
         }
@@ -609,10 +778,10 @@ impl Librarian {
                 Some(a) => a, None => continue,
             };
             for i in 0..batch.num_rows() {
-                let data = dat_arr.value(i);
-                if !is_screen_event(data) { continue; }
-                let app   = extract_app_name_from_json(data);
-                let title = extract_window_title_from_json(data);
+                let data = self.open(dat_arr.value(i));
+                if !is_screen_event(&data) { continue; }
+                let app   = extract_app_name_from_json(&data);
+                let title = extract_window_title_from_json(&data);
                 let al = app.to_lowercase();
                 // Skip dialogue/notes (not screen activity) and NIC's own window.
                 if al == "dialogue" || al == "qa" || al == "note" { continue; }
@@ -718,8 +887,8 @@ impl Librarian {
                 Some(a) => a, None => continue,
             };
             for i in 0..batch.num_rows() {
-                let data = dat_arr.value(i);
-                if is_qa_event(data) {
+                let data = self.open(dat_arr.value(i));
+                if is_qa_event(&data) {
                     all.push((ts_arr.value(i), data.to_string()));
                 }
             }
@@ -783,8 +952,8 @@ impl Librarian {
             };
             for i in 0..batch.num_rows() {
                 if ts_arr.value(i) < start_ts { continue; }
-                let data = dat_arr.value(i);
-                let v: Value = match serde_json::from_str(data) { Ok(v) => v, Err(_) => continue };
+                let data = self.open(dat_arr.value(i));
+                let v: Value = match serde_json::from_str(&data) { Ok(v) => v, Err(_) => continue };
                 let app  = v["app_name"].as_str().unwrap_or("unknown").to_string();
                 let text = v["text"].as_str().unwrap_or("").to_string();
                 if matches!(app.as_str(), "clipboard" | "system" | "analyst" | "user" | "dialogue") { continue; }
@@ -863,8 +1032,8 @@ impl Librarian {
                 Some(a) => a, None => continue,
             };
             for i in 0..batch.num_rows() {
-                let data = dat_arr.value(i);
-                if let Ok(v) = serde_json::from_str::<Value>(data) {
+                let data = self.open(dat_arr.value(i));
+                if let Ok(v) = serde_json::from_str::<Value>(&data) {
                     let stress_app = v.get("app_name").and_then(Value::as_str) == Some("stress_long");
                     let stress_tag = v.get("is_stress").and_then(Value::as_bool).unwrap_or(false);
                     if stress_app || stress_tag {
@@ -1086,13 +1255,17 @@ impl Librarian {
             Arc::new(Field::new("item", DataType::Float32, true)),
             384, values, None,
         );
+        // Single storage boundary for the unified table: every caller (fresh L0,
+        // Chronos re-insert, L1 compaction) hands plaintext in and it is sealed
+        // exactly here, so nothing upstream ever needs to think about crypto.
+        let sealed = self.seal(data_json);
         let batch = RecordBatch::try_new(schema, vec![
             Arc::new(StringArray::from(vec![id.as_str()]))              as ArrayRef,
             Arc::new(TimestampMicrosecondArray::from(vec![time_start])) as ArrayRef,
             Arc::new(TimestampMicrosecondArray::from(vec![time_end]))   as ArrayRef,
             Arc::new(Int32Array::from(vec![level]))                     as ArrayRef,
             Arc::new(BooleanArray::from(vec![archived]))                as ArrayRef,
-            Arc::new(StringArray::from(vec![data_json]))                as ArrayRef,
+            Arc::new(StringArray::from(vec![sealed.as_str()]))          as ArrayRef,
             Arc::new(embedding)                                         as ArrayRef,
         ])?;
         self.unified.add(vec![batch]).execute().await?;
@@ -1253,7 +1426,7 @@ impl Librarian {
                         time_start: ts.value(i),
                         time_end:   te.value(i),
                         level:      lv.value(i),
-                        data_json:  dat.value(i).to_string(),
+                        data_json:  self.open(dat.value(i)),
                     });
                 }
             }
@@ -1439,7 +1612,7 @@ impl Librarian {
                         "time_start":   fmt_ts(ts),
                         "time_end":     fmt_ts(tes.value(i)),
                         "timestamp_us": ts,
-                        "data":         serde_json::from_str::<Value>(dats.value(i)).unwrap_or_default(),
+                        "data":         serde_json::from_str::<Value>(&self.open(dats.value(i))).unwrap_or_default(),
                     });
                     rows.push((ts, line.to_string()));
                 }
@@ -1491,8 +1664,8 @@ impl Librarian {
                     rows.push(EventRow {
                         timestamp:    ts.value(i),
                         app_name:     app.value(i).to_string(),
-                        window_title: win.value(i).to_string(),
-                        text_summary: txt.value(i).to_string(),
+                        window_title: self.open(win.value(i)),
+                        text_summary: self.open(txt.value(i)),
                     });
                 }
             }
@@ -1558,7 +1731,7 @@ impl Librarian {
                         time_start: ts.value(i),
                         time_end:   te.value(i),
                         level:      lv.value(i),
-                        data_json:  dat.value(i).to_string(),
+                        data_json:  self.open(dat.value(i)),
                     });
                 }
             }
@@ -1663,7 +1836,7 @@ impl Librarian {
                         time_start: ts.value(i),
                         time_end:   te.value(i),
                         level:      lv.value(i),
-                        data_json:  dat.value(i).to_string(),
+                        data_json:  self.open(dat.value(i)),
                     });
                 }
             }
@@ -2439,6 +2612,80 @@ mod tests {
         let s = fmt_ts(0);
         assert!(!s.is_empty());
         assert_ne!(s, "?");
+    }
+
+    // ── at-rest field encryption (seal/open) ─────────────────────────────────
+
+    #[test]
+    fn sealed_field_roundtrips_and_is_marked() {
+        let c = ArchiveCipher::new([7u8; 32]);
+        let sealed = seal_field(Some(&c), "secret window title");
+        assert!(sealed.starts_with(ENC_MARKER));
+        assert!(!sealed.contains("secret"));
+        assert_eq!(open_field(Some(&c), &sealed), "secret window title");
+    }
+
+    #[test]
+    fn plaintext_rows_pass_through_open() {
+        // Rows written before encryption shipped must keep reading unchanged.
+        let c = ArchiveCipher::new([7u8; 32]);
+        assert_eq!(open_field(Some(&c), r#"{"text":"old row"}"#), r#"{"text":"old row"}"#);
+        assert_eq!(open_field(None, "plain"), "plain");
+    }
+
+    #[test]
+    fn no_cipher_seal_is_passthrough() {
+        assert_eq!(seal_field(None, "text"), "text");
+    }
+
+    #[test]
+    fn encrypted_row_without_key_reads_empty_not_garbage() {
+        let c = ArchiveCipher::new([7u8; 32]);
+        let sealed = seal_field(Some(&c), "secret");
+        // Different key (lost/rotated) → unreadable row, never ciphertext soup.
+        let other = ArchiveCipher::new([8u8; 32]);
+        assert_eq!(open_field(Some(&other), &sealed), "");
+        // Encryption disabled but row is encrypted → same: empty, not garbage.
+        assert_eq!(open_field(None, &sealed), "");
+    }
+
+    #[test]
+    fn tampered_ciphertext_reads_empty() {
+        let c = ArchiveCipher::new([7u8; 32]);
+        let mut sealed = seal_field(Some(&c), "secret");
+        sealed.pop();
+        sealed.push('A');
+        assert_eq!(open_field(Some(&c), &sealed), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dpapi_wraps_and_unwraps_for_current_user() {
+        let key = [42u8; 32];
+        let blob = dpapi::protect(&key).expect("protect");
+        assert_ne!(&blob[..], &key[..], "blob must not contain the raw key");
+        assert_eq!(dpapi::unprotect(&blob).expect("unprotect"), key.to_vec());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn legacy_raw_key_file_is_rewrapped_on_load() {
+        let dir  = std::env::temp_dir().join(format!("nic_key_test_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".nic_key");
+        // Simulate a pre-DPAPI key file: raw base64 on disk.
+        let key = [9u8; 32];
+        std::fs::write(&path, BASE64.encode(key)).unwrap();
+
+        let loaded = load_or_create_key(&path).expect("load legacy");
+        assert_eq!(loaded, key, "legacy key must keep decrypting old data");
+
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(on_disk.starts_with("dpapi1:"), "raw key must not remain on disk");
+
+        let again = load_or_create_key(&path).expect("load wrapped");
+        assert_eq!(again, key);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

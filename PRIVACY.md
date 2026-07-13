@@ -36,6 +36,23 @@ could hurt you most. This is enforced **in code**, not promised in a policy:
 
 All of it is plain deterministic code — no model decides what counts as private.
 
+## Your memory is encrypted on disk
+
+Everything NIC remembers is **encrypted at rest with AES-256-GCM** — the text of
+screen events, window titles, your Q&A history, and the cold-storage archives.
+
+- The key is generated on your machine and **wrapped with Windows DPAPI**: only
+  your Windows user on this computer can unwrap it. Copying the data folder to
+  another machine — or another user on the same machine reading it — yields
+  ciphertext.
+- The key is stored **outside the data folder** (`%APPDATA%\nic-assistant`), so
+  zipping your data directory for a bug report never includes the key.
+- Honest limits, stated plainly: this is the same protection model Chrome uses
+  for your cookies. It protects a stolen or synced *copy* of your data; it does
+  not protect against malware already running under your own Windows account.
+  Embedding vectors (needed for search) are not encrypted — they cannot be
+  turned back into text, but they do reveal fuzzy semantic similarity.
+
 ## What NIC sends over the network — and only then
 
 By default NIC makes **zero** network requests once installed. Network is used

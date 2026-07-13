@@ -89,11 +89,14 @@ incognito_mode = false
 cpu_limit_pct = 90.0
 
 [security]
-# Enable AES-256-GCM encryption for cold-storage archive files.
-encrypt_archives = false
+# AES-256-GCM at-rest encryption of the memory store: hot DB text fields and
+# cold archives. ON by default. The key is DPAPI-wrapped - only your Windows
+# user on this machine can read it. (Old name `encrypt_archives` still works.)
+encrypt_memory = true
 
-# Path for the auto-generated encryption key (base64-encoded, 32 bytes).
-key_file = "data/.nic_key"
+# Path for the auto-generated key (DPAPI-wrapped on Windows). The default lives
+# in %APPDATA%/nic-assistant - OUTSIDE the data folder, so zipping your data
+# directory for a bug report never includes the key.
 
 # API key for non-localhost requests. Leave empty to disable.
 api_key = ""
