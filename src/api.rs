@@ -37,6 +37,107 @@ pub struct CacheEntry {
     pub(crate) cached_at: std::time::Instant,
 }
 
+// ── Who we're talking about ───────────────────────────────────────────────────
+
+/// The person under discussion and what the USER has said about them.
+#[derive(Clone, Debug, Default)]
+pub struct EntityCtx {
+    /// Name as the user last gave it ("LenS" overrides an earlier "lens").
+    pub name:  String,
+    /// User-supplied descriptors ("dota 2 player"), newest last. Max 3.
+    pub facts: Vec<String>,
+}
+
+impl EntityCtx {
+    /// The string to actually search with: the name plus the user's own
+    /// disambiguators. "lens" alone finds camera optics; "LenS dota 2 player"
+    /// finds the person.
+    pub fn search_term(&self) -> String {
+        if self.facts.is_empty() {
+            return self.name.clone();
+        }
+        format!("{} {}", self.name, self.facts.join(" "))
+    }
+
+    fn add_fact(&mut self, f: &str) {
+        let f = f.trim();
+        if f.is_empty() || self.facts.iter().any(|x| x.eq_ignore_ascii_case(f)) {
+            return;
+        }
+        if self.facts.len() >= 3 {
+            self.facts.remove(0);
+        }
+        self.facts.push(f.to_string());
+    }
+}
+
+/// Parses a statement the user makes ABOUT the current person.
+///   "he is a dota 2 player"   → Fact("dota 2 player")
+///   "his nickname is LenS"    → Rename("LenS")
+///   "no his name is LenS"     → Rename("LenS")
+/// Returns None for anything that isn't such a statement.
+enum EntityUpdate { Fact(String), Rename(String) }
+
+fn entity_statement(query: &str) -> Option<EntityUpdate> {
+    let q = query.trim().trim_end_matches(['.', '!']);
+    let ql_full = q.to_lowercase();
+    // Corrective lead: "no", but people stretch it — "nooo", "nope", "неее".
+    // Matching only the exact "no " missed «nooo I am about cs 2 player», and the
+    // model answered with nonsense about two people playing Counter-Strike.
+    let ql = {
+        let first_end = ql_full.find(' ').unwrap_or(0);
+        // Strip punctuation before testing: "nope," must still read as a negation.
+        let first: String = ql_full[..first_end]
+            .chars().filter(|c| c.is_alphanumeric()).collect();
+        let is_negation = !first.is_empty()
+            && ((first.starts_with("no") && first.chars().all(|c| matches!(c, 'n' | 'o' | 'p' | 'e')))
+                || first.starts_with("не"));
+        if is_negation {
+            ql_full[first_end..].trim_start_matches([' ', ',']).trim()
+        } else {
+            ql_full.trim()
+        }
+    };
+    let orig_off = q.len().saturating_sub(ql.len());
+    let rest_of = |pat: &str| -> Option<String> {
+        let i = ql.find(pat)? + pat.len();
+        let s = q.get(orig_off + i..)?.trim();
+        (!s.is_empty()).then(|| s.to_string())
+    };
+
+    // A rename must come first: "his nickname is X" also contains " is ".
+    for pat in ["his nickname is ", "her nickname is ", "his name is ", "her name is ",
+                "his nick is ", "her nick is ", "его ник ", "её ник ", "ее ник "] {
+        if ql.starts_with(pat) || ql.contains(pat) {
+            if let Some(v) = rest_of(pat) {
+                return Some(EntityUpdate::Rename(v));
+            }
+        }
+    }
+    // A clarification: "I mean the japanese street racer", "no I'm talking about …".
+    // Live, "no I am about japanese street racer and founder of top secret customs"
+    // was treated as a question and the model invented a founder named Kenjiro Kawai.
+    for pat in ["i mean ", "i meant ", "i'm talking about ", "im talking about ",
+                "i am talking about ", "i am about ", "i'm about ",
+                "я про ", "я имею в виду ", "имею в виду "] {
+        if ql.starts_with(pat) {
+            let v = rest_of(pat)?;
+            let v = v.trim_start_matches("the ").trim_start_matches("a ").trim();
+            return Some(EntityUpdate::Fact(v.to_string()));
+        }
+    }
+    // A plain descriptor: "he is a dota 2 player", "she is a singer".
+    for pat in ["he is ", "she is ", "they are ", "he's ", "she's ",
+                "он ", "она "] {
+        if ql.starts_with(pat) {
+            let v = rest_of(pat)?;
+            let v = v.trim_start_matches("a ").trim_start_matches("an ").trim();
+            return Some(EntityUpdate::Fact(v.to_string()));
+        }
+    }
+    None
+}
+
 fn query_words(q: &str) -> HashSet<String> {
     q.split_whitespace()
         .filter(|w| w.len() > 2)
@@ -61,6 +162,12 @@ pub struct ApiState {
     pub api_key:       String,
     /// Last Q&A pair — prepended to context so follow-up queries have reference.
     pub last_exchange: Arc<tokio::sync::Mutex<Option<(String, String)>>>,
+    /// The person currently being discussed, plus whatever the USER has told NIC
+    /// about them. Without this, "who is lens" → "he is a dota 2 player" was
+    /// answered with a dictionary definition of an optical lens, and a later
+    /// "search his last video" found camera reviews. The user's own words are the
+    /// most reliable context there is — we keep them and search WITH them.
+    pub entity:        Arc<tokio::sync::Mutex<Option<EntityCtx>>>,
     /// URL of the local llama-server (for /llm_status health check).
     pub llm_url:       String,
     /// In-memory Q&A cache: last 20 answers, 5-minute TTL, Jaccard similarity check.
@@ -557,7 +664,20 @@ fn asks_about_secrets(query: &str) -> bool {
     ABOUT_NIC.iter().any(|w| q.contains(w))
 }
 
+/// Asked about a person we have nothing on. Rather than a dead-end refusal, ASK —
+/// the user knows who they mean, and one sentence from them ("he's a dota 2
+/// player") both disambiguates the name and makes every later search land on the
+/// right person instead of on camera optics.
+fn no_bluff_person_prompt(name: &str) -> String {
+    format!(
+        "I don't know who {name} is, and I won't guess.\n\n\
+         Tell me a bit about them — what they're known for, or where you saw them — \
+         and I'll remember it and find them. (Or turn off offline mode and I'll search the web.)"
+    )
+}
+
 /// Shown when NIC is asked about a specific person it has no grounded facts for.
+#[allow(dead_code)]
 const NO_BLUFF_PERSON: &str =
     "I don't have any verified information about that person — and I won't guess. \
      Turn off offline mode (or ask me to search) and I'll look it up on the web.";
@@ -569,27 +689,113 @@ const NO_BLUFF_PERSON: &str =
 /// all — nothing in memory, nothing from the web — we say so instead of letting
 /// the model invent. Concept questions ("what is gravity") are NOT gated: the
 /// model is reliable there, and the proper-noun check keeps them out.
+/// Removes a greeting / filler opener so the gates below see the real question.
+/// People type "hi who is X?" and "so, what is Y" all the time.
+fn strip_openers(q: &str) -> &str {
+    const OPENERS: &[&str] = &[
+        "hi ", "hey ", "hello ", "yo ", "ok ", "okay ", "so ", "and ", "btw ",
+        "hi, ", "hey, ", "hello, ", "ok, ", "okay, ", "so, ", "btw, ",
+        "привет ", "привет, ", "слушай ", "слушай, ", "а ", "и ",
+    ];
+    let mut s = q.trim();
+    // One opener is enough ("hi hey who is X" is not a thing).
+    let sl = s.to_lowercase();
+    for o in OPENERS {
+        if sl.starts_with(o) {
+            s = s[o.len()..].trim_start();
+            break;
+        }
+    }
+    s
+}
+
 /// Returns the person's name when the query asks who a specific NAMED person is.
 /// `None` for concept questions ("what is gravity") and pronoun follow-ups
 /// ("who is he") — those are handled by the normal QA path.
 fn person_in_question(query: &str) -> Option<String> {
-    let q = query.trim();
+    // Strip a greeting or filler opener. "hi who is smoky nagata?" skipped the gate
+    // entirely — the check demanded the query START with "who is" — and the model
+    // answered that he was "an American actor known for John McClane in Die Hard".
+    let q = strip_openers(query.trim());
     let ql = q.to_lowercase();
     const LEADS: &[&str] = &[
         "who is ", "who was ", "who's ", "who are ", "who were ",
         "кто такой ", "кто такая ", "кто такие ",
     ];
-    let lead = LEADS.iter().find(|l| ql.starts_with(**l))?;
-    let rest = q.get(lead.len()..)?.trim_end_matches(|c: char| matches!(c, '?' | '!' | '.'));
-    let first = rest.split_whitespace().next()?;
-    if matches!(first.to_lowercase().as_str(), "he" | "she" | "they" | "it" | "i" | "you") {
+    // Find the lead ANYWHERE, not only at the start. People wrap it in politeness:
+    // "hi nic could u say me who is kyosuke" slipped through and the model invented
+    // an anime character. The name is whatever follows the lead.
+    let (at, lead) = LEADS.iter()
+        .filter_map(|l| ql.find(l).map(|i| (i, *l)))
+        .min_by_key(|(i, _)| *i)?;
+    let rest = q.get(at + lead.len()..)?
+        .trim_end_matches(|c: char| matches!(c, '?' | '!' | '.'));
+    let first = rest.split_whitespace().next()?.to_lowercase();
+    let first = first.trim_matches(|c: char| !c.is_alphanumeric());
+
+    // A pronoun is a follow-up, not a name.
+    if matches!(first, "he" | "she" | "they" | "it" | "i" | "you" | "we") {
         return None;
     }
-    // A proper noun (capitalized token) means a specific person, not a concept.
-    if !rest.split_whitespace().any(|w| w.chars().next().is_some_and(char::is_uppercase)) {
+    // A determiner means it's a descriptive question ("who is the best programmer"),
+    // not a named person.
+    if matches!(first, "the" | "a" | "an" | "my" | "your" | "his" | "her" | "their"
+                     | "this" | "that" | "твой" | "мой" | "этот") {
         return None;
     }
+    // Everything else after "who is" is a name. Requiring a CAPITAL letter here was
+    // the bug: typing "who is qewbite" in lowercase slipped past the gate and the
+    // model answered with its own persona ("I am NIC-assistant") instead of
+    // admitting it had never heard of him.
     Some(rest.trim().to_string())
+}
+
+/// The subject of an "about"-style question ("tell me about donk" → "donk").
+/// Deliberately broader than `person_in_question`: it also catches concepts, and
+/// that is fine — this only decides WHAT the conversation is currently on. Without
+/// it, "tell me about donk" tracked nobody, so the user's own correction ("I am
+/// about the cs 2 player donk") had nothing to attach to, fell through to the
+/// model, and came back as a confident invented esports biography.
+fn about_subject(query: &str) -> Option<String> {
+    let q = strip_openers(query.trim());
+    let ql = q.to_lowercase();
+    const ABOUT_LEADS: &[&str] = &[
+        "tell me more about ", "tell me about ", "tell about ", "tell me smth about ",
+        "what do you know about ", "what can you tell me about ", "do you know about ",
+        "info about ", "information about ",
+        "расскажи мне про ", "расскажи про ", "расскажи о ", "расскажи об ",
+        "что ты знаешь о ", "что ты знаешь про ",
+    ];
+    // The lead can sit mid-sentence: "hi assistant could u tell me about donk".
+    let (at, lead) = ABOUT_LEADS.iter()
+        .filter_map(|l| ql.find(l).map(|i| (i, *l)))
+        .min_by_key(|(i, _)| *i)?;
+    let rest = q.get(at + lead.len()..)?
+        .trim_end_matches(|c: char| matches!(c, '?' | '!' | '.'))
+        .trim()
+        .trim_start_matches("the ")
+        .trim_start_matches("a ")
+        .trim();
+
+    let first = rest.split_whitespace().next()?.to_lowercase();
+    let first = first.trim_matches(|c: char| !c.is_alphanumeric());
+    // Self-reference and pronouns are not topics: "tell me about yourself" is a
+    // persona question, "tell me about him" is a follow-up the QA path resolves.
+    if matches!(first, "you" | "yourself" | "your" | "me" | "myself" | "my" | "us" | "our"
+                     | "him" | "his" | "her" | "them" | "their" | "it" | "this" | "that"
+                     | "себя" | "тебе" | "мне" | "него" | "неё" | "нее") {
+        return None;
+    }
+    let n = rest.split_whitespace().count();
+    (n >= 1 && n <= 6 && rest.chars().count() <= 60).then(|| rest.to_string())
+}
+
+/// Who — or what — the conversation is now about. Used only to TRACK the current
+/// entity, so a pronoun ("his last video") and a correction ("I mean the cs 2
+/// player") both have a referent. The stricter `person_in_question` still decides
+/// whether we refuse to guess.
+fn entity_in_question(query: &str) -> Option<String> {
+    person_in_question(query).or_else(|| about_subject(query))
 }
 
 /// Appended when the model answers about a NAMED thing that no source backs.
@@ -606,13 +812,22 @@ wrong or entirely invented. Ask me to search the web to verify.";
 /// "Karakov-Feldstein"). `None` for questions with no named entity ("what is
 /// gravity"), which the model handles reliably.
 fn named_entity_in_question(query: &str) -> Option<String> {
-    let q = query.trim();
+    let q0 = query.trim();
+    // "who is X" / "tell me about X": the subject is whatever follows, capitalised
+    // or not. A bare lowercase handle is exactly what the model invents lives for —
+    // "tell me about donk" came back as a confident Donkey Kong biography, and then
+    // as an American Team Liquid player. Concept questions ("what is gravity") have
+    // no such lead, so they still answer unlabelled.
+    if let Some(subj) = person_in_question(q0).or_else(|| about_subject(q0)) {
+        return Some(subj);
+    }
+    let q = strip_openers(q0);
     // Only factual lookups — not commands, not chat.
     let ql = q.to_lowercase();
     const FACT_LEADS: &[&str] = &[
-        "what is", "what was", "what's", "what are", "who is", "who was", "who are",
+        "what is", "what was", "what's", "what are",
         "who invented", "who discovered", "who won", "who wrote", "who created",
-        "tell me about", "explain", "describe", "define", "when was", "when did",
+        "explain", "describe", "define", "when was", "when did",
         "where is", "where was",
     ];
     if !FACT_LEADS.iter().any(|l| ql.starts_with(l)) {
@@ -737,7 +952,11 @@ async fn handle_query(
     // about the user / their machine are answered from code, never the LLM.
     {
         use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-        let det: Option<String> = if let Some(days) = report_request(&query) {
+        let det: Option<String> = if let Some(msg) =
+            update_entity(&state.entity, &query, &state.librarian).await
+        {
+            Some(msg)
+        } else if let Some(days) = report_request(&query) {
             Some(write_report(&state.librarian, &state.thinker, &state.language, days).await)
         } else if asks_about_secrets(&query) {
             Some(SECRETS_ANSWER.to_string())
@@ -766,15 +985,31 @@ async fn handle_query(
 
     let (lib_ctx, surf_ctx) = state.collector.collect(&query, offline).await;
 
+    // Track who is being discussed (mirrors the streaming path).
+    if let Some(name) = entity_in_question(&query) {
+        let mut e = state.entity.lock().await;
+        if e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(&name)) {
+            *e = Some(EntityCtx { name: name.clone(), facts: Vec::new() });
+        }
+    }
+
     // Never bluff about a named person the facts don't actually mention.
     if let Some(name) = person_in_question(&query) {
         if !person_is_grounded(&name, &lib_ctx, &surf_ctx) {
-            tracing::info!("[NoBluff] «{}» not in any facts — refusing to guess", name);
+            tracing::info!("[NoBluff] «{}» not in any facts — asking the user instead", name);
             return Ok(Json(QueryResponse {
-                answer: NO_BLUFF_PERSON.to_string(),
+                answer: no_bluff_person_prompt(&name),
                 elapsed_ms: start.elapsed().as_millis(),
             }));
         }
+    }
+
+    // A follow-up about that person which our facts cannot answer → one honest
+    // line, not two paragraphs of the model narrating its own uncertainty.
+    if let Some(answer) =
+        unanswerable_about_person(&state.entity, &query, offline, &surf_ctx).await
+    {
+        return Ok(Json(QueryResponse { answer, elapsed_ms: start.elapsed().as_millis() }));
     }
 
     // A named thing with no source behind it → the answer gets labelled, not
@@ -845,17 +1080,29 @@ async fn handle_query_stream(
     // Whether to strip leaked CJK glyphs from the answer (off only for CJK languages).
     let filter_cjk   = { let l = state.language.lock().await; !lang_is_cjk(&l) };
     let language_for_report = state.language.clone();
+    let entity_ctx          = state.entity.clone();
 
     let librarian_media = state.librarian.clone();
     tokio::spawn(async move {
         // Back-reference resolution for commands only ("open video about him" →
         // "…about David Laid"). QA/chat keeps the original query — its follow-up
         // logic handles pronouns itself.
-        let cmd_query = match last_exchange.lock().await.clone() {
-            Some((prev_q, _)) => crate::modules::anaphora::resolve(&query, &prev_q)
-                .inspect(|r| tracing::info!("[Anaphora] «{}» → «{}»", query, r))
-                .unwrap_or_else(|| query.clone()),
-            None => query.clone(),
+        //
+        // The referent is the person we're tracking, WITH whatever the user told us
+        // about them: "lens" alone searches to camera optics, "LenS dota 2 player"
+        // finds the person. Falls back to the previous question when we have no
+        // tracked person.
+        let cmd_query = {
+            let ent = entity_ctx.lock().await.clone();
+            let referent = ent.map(|e| e.search_term());
+            let prev = last_exchange.lock().await.clone().map(|(q, _)| q);
+            let source = referent.or(prev);
+            match source {
+                Some(src) => crate::modules::anaphora::resolve(&query, &src)
+                    .inspect(|r| tracing::info!("[Anaphora] «{}» → «{}»", query, r))
+                    .unwrap_or_else(|| query.clone()),
+                None => query.clone(),
+            }
         };
 
         // Memory-informed media routing (Pilot×Memory) before generic actions.
@@ -933,7 +1180,11 @@ async fn handle_query_stream(
         // always reflects current state, never a stale cached non-answer.
         {
             use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-            let det: Option<String> = if let Some(days) = report_request(&query) {
+            let det: Option<String> = if let Some(msg) =
+                update_entity(&entity_ctx, &query, &librarian).await
+            {
+                Some(msg)
+            } else if let Some(days) = report_request(&query) {
                 Some(write_report(&librarian, &thinker, &language_for_report, days).await)
             } else if asks_about_secrets(&query) {
                 Some(SECRETS_ANSWER.to_string())
@@ -1010,14 +1261,47 @@ async fn handle_query_stream(
 
         let (lib_ctx, surf_ctx) = collector.collect(&collect_query, offline).await;
 
+        // Remember WHO is being discussed, so a later "his last video" resolves —
+        // and so the user can teach us about them ("he is a dota 2 player").
+        if let Some(name) = entity_in_question(&query) {
+            let mut e = entity_ctx.lock().await;
+            let changed = e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(&name));
+            if changed {
+                *e = Some(EntityCtx { name: name.clone(), facts: Vec::new() });
+            }
+        }
+
         // Never bluff about a named person the facts don't actually mention.
         if let Some(name) = person_in_question(&query) {
             if !person_is_grounded(&name, &lib_ctx, &surf_ctx) {
                 tracing::info!("[NoBluff] «{}» not in any facts — refusing to guess", name);
-                let _ = tx.send(NO_BLUFF_PERSON.to_string()).await;
+                // Record the turn anyway. The user still NAMED someone, so a
+                // follow-up ("open video about him") must resolve to that person —
+                // without this, the pronoun bound to an older, unrelated question
+                // and produced «video about i just doing».
+                let msg = no_bluff_person_prompt(&name);
+                {
+                    let mut last = last_exchange.lock().await;
+                    *last = Some((query.clone(), msg.clone()));
+                }
+                let _ = tx.send(msg).await;
                 let _ = tx.send("[DONE]".to_string()).await;
                 return;
             }
+        }
+
+        // A follow-up about the person that we simply cannot answer → say so once,
+        // clearly, instead of letting the model waffle.
+        if let Some(msg) =
+            unanswerable_about_person(&entity_ctx, &query, offline, &surf_ctx).await
+        {
+            {
+                let mut last = last_exchange.lock().await;
+                *last = Some((query.clone(), msg.clone()));
+            }
+            let _ = tx.send(msg).await;
+            let _ = tx.send("[DONE]".to_string()).await;
+            return;
         }
 
         // A named thing with no source behind it → the answer gets labelled once
@@ -1667,6 +1951,76 @@ fn report_request(query: &str) -> Option<i64> {
     Some(days)
 }
 
+/// A follow-up question about the tracked person that our facts cannot answer.
+/// "how tall he is" / "is he alive" made the model waffle for two paragraphs about
+/// not having the information. Say it in one line, and offer the way out.
+async fn unanswerable_about_person(
+    entity:   &Arc<tokio::sync::Mutex<Option<EntityCtx>>>,
+    query:    &str,
+    offline:  bool,
+    surf_ctx: &str,
+) -> Option<String> {
+    if !offline && !surf_ctx.trim().is_empty() {
+        return None;                       // the web gave us something — let it answer
+    }
+    let ql = query.trim().to_lowercase();
+    // A question, and it's about him/her (a follow-up, not a fresh topic).
+    let is_question = ql.ends_with('?')
+        || ["how ", "is he", "is she", "was he", "was she", "does he", "does she",
+            "did he", "did she", "what does he", "where is he", "when did he"]
+            .iter().any(|w| ql.starts_with(w));
+    let about_them = ["he ", "she ", " he", " she", "his ", "her ", "him", "them", "their"]
+        .iter().any(|w| ql.contains(w));
+    if !is_question || !about_them {
+        return None;
+    }
+    let ctx = entity.lock().await.clone()?;
+    if ctx.facts.is_empty() {
+        return None;                       // nothing taught yet — normal QA path
+    }
+    Some(format!(
+        "All I know about {} is what you told me: {}.\n\n\
+         I won't guess beyond that. Turn off offline mode (or ask me to search) and \
+         I'll look it up.",
+        ctx.name,
+        ctx.facts.join("; ")
+    ))
+}
+
+/// Handles the user TELLING NIC about the person under discussion. Returns the
+/// reply when the query was such a statement (so it never reaches the model,
+/// which used to answer "he is a dota 2 player" with a definition of an optical
+/// lens). Facts are kept in memory for search, and written to the Librarian so
+/// they survive a restart.
+async fn update_entity(
+    entity:    &Arc<tokio::sync::Mutex<Option<EntityCtx>>>,
+    query:     &str,
+    librarian: &crate::librarian::Librarian,
+) -> Option<String> {
+    let upd = entity_statement(query)?;
+    let mut guard = entity.lock().await;
+    let ctx = guard.as_mut()?;   // nothing to attach the fact to — let QA handle it
+
+    match upd {
+        EntityUpdate::Rename(new_name) => {
+            let old = std::mem::replace(&mut ctx.name, new_name.clone());
+            let line = format!("[Person] {} (also known as {})", new_name, old);
+            let _ = librarian.add_event(&line, "user", "person").await;
+            Some(format!("Got it — {new_name}. I'll use that from now on."))
+        }
+        EntityUpdate::Fact(fact) => {
+            ctx.add_fact(&fact);
+            let line = format!("[Person] {} — {}", ctx.name, fact);
+            let _ = librarian.add_event(&line, "user", "person").await;
+            Some(format!(
+                "Got it — {} is {}. I'll remember that, and I'll use it when I look \
+                 them up.\n\nTry: *play their last video* — I'll search for «{}».",
+                ctx.name, fact, ctx.search_term()
+            ))
+        }
+    }
+}
+
 /// Builds the report from screen memory, saves it as a Markdown file, and returns
 /// the chat answer. Runs in the deterministic router: the model is only allowed to
 /// FORMAT the activity log it is handed.
@@ -2036,6 +2390,39 @@ mod tests {
         assert!(named_entity_in_question("hi").is_none());
     }
 
+    // ── "tell me about X" tracks a subject ────────────────────────────────────
+
+    #[test]
+    fn about_questions_name_the_current_subject() {
+        // Live: "hi assistant could u tell me about donk" tracked nobody, so the
+        // user's own correction a turn later had nothing to attach to.
+        assert_eq!(
+            about_subject("hi assistant could u tell me about donk").as_deref(),
+            Some("donk"));
+        assert_eq!(
+            about_subject("tell me about the Helsinki Protocol").as_deref(),
+            Some("Helsinki Protocol"));
+        assert_eq!(
+            about_subject("what do you know about smokey nagata?").as_deref(),
+            Some("smokey nagata"));
+    }
+
+    #[test]
+    fn about_questions_that_name_nobody_track_nothing() {
+        assert!(about_subject("tell me about yourself").is_none());   // persona question
+        assert!(about_subject("tell me about him").is_none());        // follow-up pronoun
+        assert!(about_subject("tell me about my day").is_none());     // about the user
+        assert!(about_subject("what is gravity").is_none());          // not an "about" lead
+    }
+
+    #[test]
+    fn a_bare_handle_still_gets_the_unverified_caveat() {
+        // "tell me about donk" answered with a confident Donkey Kong biography.
+        // Lowercase usernames are precisely the case the model invents lives for.
+        assert!(named_entity_in_question("hi assistant could u tell me about donk").is_some());
+        assert!(named_entity_in_question("who is qewbite").is_some());
+    }
+
     // ── host_is_local (DNS-rebinding gate) ────────────────────────────────────
 
     #[test]
@@ -2067,6 +2454,96 @@ mod tests {
         assert_eq!(person_in_question("Who was Alan Turing?").as_deref(), Some("Alan Turing"));
         assert_eq!(person_in_question("who's Elon Musk").as_deref(), Some("Elon Musk"));
         assert_eq!(person_in_question("кто такой Хабиб").as_deref(), Some("Хабиб"));
+    }
+
+    // ── user-taught facts about a person ─────────────────────────────────────
+
+    #[test]
+    fn user_statements_about_a_person_are_captured() {
+        // Live: "who is lens" → "he is a dota 2 player" was answered with a
+        // definition of an optical lens. It is a STATEMENT, not a question.
+        assert!(matches!(entity_statement("he is a dota 2 player"),
+                         Some(EntityUpdate::Fact(f)) if f == "dota 2 player"));
+        assert!(matches!(entity_statement("she is a singer"),
+                         Some(EntityUpdate::Fact(f)) if f == "singer"));
+        assert!(matches!(entity_statement("no his nickname is LenS"),
+                         Some(EntityUpdate::Rename(n)) if n == "LenS"));
+        assert!(matches!(entity_statement("his name is Bulkin"),
+                         Some(EntityUpdate::Rename(n)) if n == "Bulkin"));
+    }
+
+    #[test]
+    fn greeting_before_a_question_still_gates() {
+        // Live: "hi who is smoky nagata?" skipped the gate and the model answered
+        // that he played John McClane in Die Hard.
+        assert_eq!(person_in_question("hi who is smoky nagata?").as_deref(), Some("smoky nagata"));
+        assert_eq!(person_in_question("hey, who is Bulkin").as_deref(), Some("Bulkin"));
+        assert_eq!(person_in_question("so who was Alan Turing?").as_deref(), Some("Alan Turing"));
+    }
+
+    #[test]
+    fn politeness_wrapped_questions_still_gate() {
+        // Live: "hi nic could u say me who is kyosuke" → the model invented an
+        // anime character. The lead can sit anywhere in the sentence.
+        assert_eq!(
+            person_in_question("hi nic could u say me who is kyosuke").as_deref(),
+            Some("kyosuke"));
+        assert_eq!(
+            person_in_question("can you tell me who is David Laid").as_deref(),
+            Some("David Laid"));
+    }
+
+    #[test]
+    fn stretched_negation_still_reads_as_a_correction() {
+        // Live: "nooo I am about cs 2 player" → the model explained that
+        // "C.S. 2 Player refers to two players playing Counter-Strike".
+        assert!(matches!(entity_statement("nooo I am about cs 2 player"),
+                         Some(EntityUpdate::Fact(f)) if f == "cs 2 player"));
+        assert!(matches!(entity_statement("nope, he is a singer"),
+                         Some(EntityUpdate::Fact(f)) if f == "singer"));
+    }
+
+    #[test]
+    fn clarifications_are_captured_as_facts() {
+        // Live: "no I am about japanese street racer and founder of top secret
+        // customs" was answered with an invented founder, Kenjiro Kawai.
+        assert!(matches!(
+            entity_statement("no I am about japanese street racer and founder of top secret customs"),
+            Some(EntityUpdate::Fact(f)) if f.contains("street racer")));
+        assert!(matches!(entity_statement("I mean the dota player"),
+                         Some(EntityUpdate::Fact(f)) if f == "dota player"));
+    }
+
+    #[test]
+    fn questions_are_not_statements() {
+        assert!(entity_statement("who is lens").is_none());
+        assert!(entity_statement("what is gravity").is_none());
+        assert!(entity_statement("play his last video").is_none());
+    }
+
+    #[test]
+    fn search_term_carries_user_facts() {
+        // "lens" alone finds camera optics; the user's own words disambiguate.
+        let mut e = EntityCtx { name: "LenS".into(), facts: vec![] };
+        assert_eq!(e.search_term(), "LenS");
+        e.add_fact("dota 2 player");
+        assert_eq!(e.search_term(), "LenS dota 2 player");
+    }
+
+    #[test]
+    fn lowercase_names_are_still_people() {
+        // Shipped bug: "who is qewbite" (no capital) slipped past the gate, so the
+        // model answered "I am NIC-assistant" instead of admitting it never heard
+        // of him. People do not capitalise usernames.
+        assert_eq!(person_in_question("who is qewbite").as_deref(), Some("qewbite"));
+        assert_eq!(person_in_question("who is david laid").as_deref(), Some("david laid"));
+    }
+
+    #[test]
+    fn descriptive_who_questions_are_not_people() {
+        assert!(person_in_question("who is the best programmer").is_none());
+        assert!(person_in_question("who is your creator").is_none());
+        assert!(person_in_question("who is he").is_none());
     }
 
     #[test]
