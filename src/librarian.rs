@@ -746,14 +746,23 @@ impl Librarian {
     /// Aggregates today's activity from unified_memory for the Analyst module.
     /// Returns a formatted string grouped by app, sorted by event count descending.
     pub async fn daily_activity_summary(&self) -> Result<String> {
+        self.activity_summary_for_days(1).await
+    }
+
+    /// Aggregated activity over the last `days` days (1 = since midnight today).
+    /// Feeds the report writer: the model only FORMATS these facts, never invents
+    /// them — which is the one writing job a 1.5B model is actually good at.
+    pub async fn activity_summary_for_days(&self, days: i64) -> Result<String> {
         let today_start = chrono::Local::now()
             .date_naive()
             .and_hms_opt(0, 0, 0)
             .unwrap_or_default();
-        let start_ts = chrono::TimeZone::from_local_datetime(&chrono::Local, &today_start)
+        let base_ts = chrono::TimeZone::from_local_datetime(&chrono::Local, &today_start)
             .single()
             .map(|dt| dt.with_timezone(&Utc).timestamp_micros())
             .unwrap_or_else(|| Utc::now().timestamp_micros() - 86_400_000_000i64);
+        // days=1 → today only; days=7 → today plus the six preceding days.
+        let start_ts = base_ts - (days.saturating_sub(1)).max(0) * 86_400_000_000i64;
 
         // LanceDB cannot compare Int64 literal against Timestamp column directly.
         // Filter by level in SQL; apply the timestamp cutoff in Rust.

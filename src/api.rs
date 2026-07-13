@@ -737,7 +737,9 @@ async fn handle_query(
     // about the user / their machine are answered from code, never the LLM.
     {
         use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-        let det: Option<String> = if asks_about_secrets(&query) {
+        let det: Option<String> = if let Some(days) = report_request(&query) {
+            Some(write_report(&state.librarian, &state.thinker, &state.language, days).await)
+        } else if asks_about_secrets(&query) {
             Some(SECRETS_ANSWER.to_string())
         } else if is_activity_recall(&query) {
             Some(state.librarian.activity_summary(6).await)
@@ -842,6 +844,7 @@ async fn handle_query_stream(
     let profile      = state.profile.clone();
     // Whether to strip leaked CJK glyphs from the answer (off only for CJK languages).
     let filter_cjk   = { let l = state.language.lock().await; !lang_is_cjk(&l) };
+    let language_for_report = state.language.clone();
 
     let librarian_media = state.librarian.clone();
     tokio::spawn(async move {
@@ -930,7 +933,9 @@ async fn handle_query_stream(
         // always reflects current state, never a stale cached non-answer.
         {
             use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-            let det: Option<String> = if asks_about_secrets(&query) {
+            let det: Option<String> = if let Some(days) = report_request(&query) {
+                Some(write_report(&librarian, &thinker, &language_for_report, days).await)
+            } else if asks_about_secrets(&query) {
                 Some(SECRETS_ANSWER.to_string())
             } else if is_activity_recall(&query) {
                 Some(librarian.activity_summary(6).await)
@@ -1633,6 +1638,133 @@ struct NoteSaveResponse {
     content: String,
 }
 
+// ── Report writer ─────────────────────────────────────────────────────────────
+// "Write a report of my week" → a real .md file built from screen memory. This is
+// the one writing job worth having: the model does NOT compose from imagination,
+// it FORMATS facts only NIC has. No other assistant can write this document,
+// because no other assistant has the data.
+
+/// Detects a request to write a report/summary document, and for how many days.
+/// Deterministic — a small model must not decide whether to create files.
+fn report_request(query: &str) -> Option<i64> {
+    let q = query.to_lowercase();
+    const VERBS: &[&str] = &[
+        "write a report", "write a summary", "make a report", "create a report",
+        "write me a report", "write up my", "report on what i", "summarize my week",
+        "summarise my week", "summarize my day", "write a doc", "save a report",
+        "напиши отчёт", "напиши отчет", "сделай отчёт", "сделай отчет", "составь отчёт",
+    ];
+    if !VERBS.iter().any(|v| q.contains(v)) {
+        return None;
+    }
+    let days = if q.contains("week") || q.contains("недел") {
+        7
+    } else if q.contains("month") || q.contains("месяц") {
+        30
+    } else {
+        1
+    };
+    Some(days)
+}
+
+/// Builds the report from screen memory, saves it as a Markdown file, and returns
+/// the chat answer. Runs in the deterministic router: the model is only allowed to
+/// FORMAT the activity log it is handed.
+async fn write_report(
+    librarian: &crate::librarian::Librarian,
+    thinker:   &Arc<tokio::sync::Mutex<crate::modules::thinker::Thinker>>,
+    language:  &Arc<tokio::sync::Mutex<String>>,
+    days:      i64,
+) -> String {
+    let activity = match librarian.activity_summary_for_days(days).await {
+        Ok(a) if !a.trim().is_empty() => a,
+        _ => return "I don't have enough recorded activity to write a report yet. \
+                     Let me watch your screen for a while first.".to_string(),
+    };
+
+    let period = match days {
+        1 => "today".to_string(),
+        7 => "the last 7 days".to_string(),
+        n => format!("the last {n} days"),
+    };
+    let lang   = language.lock().await.clone();
+    let prompt = report_prompt(&period, &activity, &lang);
+
+    let t = thinker.clone();
+    let generated = tokio::task::spawn_blocking(move || {
+        t.blocking_lock().generate_raw(&prompt, 600)
+    }).await;
+
+    let text = match generated {
+        Ok(Ok(s)) if !s.trim().is_empty() => s,
+        _ => {
+            // The model failed or timed out — still deliver a real document built
+            // from the facts, rather than nothing.
+            format!("Activity report — {period}\n\n{activity}")
+        }
+    };
+
+    let fallback_title = format!("Activity report {period}");
+    let (raw_title, body) = split_title_body(&text, &fallback_title);
+    let title = clean_report_title(&raw_title, &fallback_title);
+
+    // The saved file always carries the facts it was written from. A report the
+    // user might forward to someone must be auditable — if the model embellished,
+    // the source section shows exactly what was actually recorded.
+    let file_body = format!(
+        "{body}\n\n---\n\n## Source — what NIC actually recorded\n\n{activity}\n\n\
+         *Written by NIC from local screen memory. Nothing left this device.*"
+    );
+
+    match crate::notes::save_note(&title, &file_body) {
+        Ok(file) => {
+            let _ = librarian
+                .add_event(&format!("[Report: {}]\n{}", title, body), "note", "report")
+                .await;
+            format!(
+                "Wrote **{title}** from what I saw on your screen over {period}.\n\n\
+                 Saved to `Documents/NIC Notes/{file}`\n\n---\n\n{body}"
+            )
+        }
+        Err(e) => {
+            tracing::warn!("[Report] could not save file: {e}");
+            format!("Here's your report for {period} (couldn't save the file: {e}):\n\n{body}")
+        }
+    }
+}
+
+fn report_prompt(period: &str, activity: &str, language: &str) -> String {
+    format!(
+        "<|im_start|>system\n\
+         Write a work report in {language} from the activity log below.\n\
+         Use ONLY what the log contains.\n\
+         NEVER state a duration, a time of day, or a frequency — the log records \
+         WHAT was on screen, not how long. Writing \"about half an hour\" or \
+         \"every hour\" is a fabrication.\n\
+         NEVER invent a task, a project name, a person or a number.\n\
+         FIRST line: a short plain title, 3-6 words. No markdown, no colon, and do \
+         not write the word Title.\n\
+         Then: one short paragraph on what the period was spent on, then bullet \
+         points grouped by theme. End with a one-line takeaway.\n\
+         No preamble, no meta-commentary.<|im_end|>\n\
+         <|im_start|>user\nPeriod: {period}\n\nActivity log:\n{activity}<|im_end|>\n\
+         <|im_start|>assistant\n"
+    )
+}
+
+/// Cleans the model's first line into a real filename-able title. The model likes
+/// to emit "**Title:** Activity Report", which became a literal file name.
+fn clean_report_title(raw: &str, fallback: &str) -> String {
+    let mut t = raw.trim().trim_matches(['#', '*', '-', ' ']).to_string();
+    for lead in ["title:", "заголовок:", "название:"] {
+        if t.to_lowercase().starts_with(lead) {
+            t = t[lead.len()..].to_string();
+        }
+    }
+    let t = t.trim().trim_matches(['*', '#', ':', ' ']).trim().to_string();
+    if t.is_empty() || t.chars().count() > 60 { fallback.to_string() } else { t }
+}
+
 fn note_prompt(raw: &str, language: &str) -> String {
     format!(
         "<|im_start|>system\n\
@@ -1829,6 +1961,37 @@ pub async fn run_bootstrap_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── report writer ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn report_requests_are_detected_with_the_right_window() {
+        assert_eq!(report_request("write a report of my week"), Some(7));
+        assert_eq!(report_request("summarize my week"), Some(7));
+        assert_eq!(report_request("write a report"), Some(1));
+        assert_eq!(report_request("make a report of what I did today"), Some(1));
+        assert_eq!(report_request("напиши отчёт за неделю"), Some(7));
+        assert_eq!(report_request("write a report of the last month"), Some(30));
+    }
+
+    #[test]
+    fn report_titles_are_cleaned() {
+        // The model really emitted "**Title:** Activity Report for Last Seven Days",
+        // which became a literal file name.
+        assert_eq!(clean_report_title("**Title:** Activity Report", "fb"), "Activity Report");
+        assert_eq!(clean_report_title("# My Week", "fb"), "My Week");
+        assert_eq!(clean_report_title("   ", "fb"), "fb");
+        assert_eq!(clean_report_title(&"x".repeat(80), "fb"), "fb");
+    }
+
+    #[test]
+    fn ordinary_questions_do_not_write_files() {
+        // Creating a file is a side effect — only an explicit request may trigger it.
+        assert!(report_request("what did I do today").is_none());
+        assert!(report_request("summarize this article").is_none());
+        assert!(report_request("what is a report").is_none());
+        assert!(report_request("hi").is_none());
+    }
 
     // ── secrets gate (asked live, the model invented having held them) ────────
 
