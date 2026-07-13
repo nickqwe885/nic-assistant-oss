@@ -25,7 +25,6 @@ const CONNECTORS: &[&str] = &["about", "of", "by", "from", "with"];
 /// "there", "they", "these", "more" stay with the QA follow-up logic.
 const PRONOUNS: &[&str] = &[
     "him", "her", "them", "it", "his", "its", "their", "this", "that",
-    // Legacy Russian (harmless when RU is never typed).
 ];
 
 /// Rewrite `query` with the pronoun replaced by the previous question's
@@ -142,12 +141,9 @@ fn referent_of(prev_q: &str) -> Option<String> {
     if n_chars < 2 || n_chars > 60 || toks.len() > 6 {
         return None;
     }
-    // The previous question must actually NAME something. Two ways it fails:
-    //
-    //  a) the whole referent is itself a pronoun ("who is he");
-    //  b) it STARTS with a pronoun — "What was I just doing?" strips to "I just
-    //     doing", which shipped as «open video about I just doing». A question
-    //     about the user is not an entity to refer back to.
+    // The previous question must NAME something. Reject a referent that is itself
+    // a pronoun ("who is he") or starts with one ("what was I just doing" -> "I
+    // just doing") — a question about the user is not an entity to refer back to.
     const NON_ENTITY_LEADS: &[&str] = &[
         "i", "you", "he", "she", "we", "they", "it", "me", "my", "your", "his",
         "her", "our", "their", "this", "that", "these", "those",
@@ -259,7 +255,7 @@ mod tests {
 
     #[test]
     fn possessive_resolves_mid_command() {
-        // Live: "who is Bulkin" → "turn his last video" wasn't understood as a
+        // Regression: "who is Bulkin" → "turn his last video" wasn't understood as a
         // command at all and the model rambled about YouTube being a platform.
         assert_eq!(
             resolve("turn his last video", "who is Bulkin"),
@@ -277,7 +273,7 @@ mod tests {
 
     #[test]
     fn a_question_about_the_user_is_not_a_referent() {
-        // Shipped bug: this produced «Playing "video about i just doing" on YouTube».
+        // Regression: this produced «Playing "video about i just doing" on YouTube».
         assert_eq!(resolve("open video about him", "What was I just doing?"), None);
         assert_eq!(resolve("play her", "what did I do today"), None);
         assert_eq!(resolve("open video about him", "what is my name"), None);

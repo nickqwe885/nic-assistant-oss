@@ -61,7 +61,7 @@ pub async fn ensure_ready(
 
     if !model_path.exists() {
         std::fs::create_dir_all(model_path.parent().context("model_path has no parent")?)?;
-        // §5 BYO-first. Three tiers, each falling back to the next:
+        // BYO-first. Three tiers, each falling back to the next:
         //   1. a .gguf the user dropped next to the app → adopt silently, fully offline.
         //   2. otherwise ask via the system file explorer → adopt the picked file.
         //   3. otherwise (cancelled / unavailable) → download the recommended model.
@@ -112,7 +112,7 @@ fn first_gguf_in(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// §5 BYO-GGUF: ask the user to point at an already-downloaded model through the
+/// BYO-GGUF: ask the user to point at an already-downloaded model through the
 /// system file explorer. Returns the chosen path, or None (cancelled / unavailable)
 /// to fall back to the optional download. Best-effort — must never panic the boot.
 fn prompt_gguf_via_dialog() -> Option<PathBuf> {
@@ -122,7 +122,7 @@ fn prompt_gguf_via_dialog() -> Option<PathBuf> {
         .pick_file()
 }
 
-/// §5 BYO-GGUF: looks for a user-supplied model the user dropped into the models
+/// BYO-GGUF: looks for a user-supplied model the user dropped into the models
 /// dir, next to the app, or in `<app>/models`, so a fresh install can run fully
 /// offline without the optional download. Returns the first match.
 fn find_byo_gguf(model_dir: Option<&Path>) -> Option<PathBuf> {

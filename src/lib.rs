@@ -93,7 +93,7 @@ pub async fn run_backend() -> Result<()> {
 async fn init_backend() -> Result<()> {
     // --- [1] Components ---
     let cfg = config::load_config()?;
-    // English-only beta (MASTER_PLAN §9[1]): NO OS-locale auto-detection — it
+    // English-only beta: no OS-locale auto-detection — it
     // used to flip the whole UI + model prompts to the machine's language
     // (seen live: Russian Windows → Russian UI on first run). English unless
     // the user EXPLICITLY sets `language` in config.toml; the i18n dictionaries

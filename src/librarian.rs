@@ -263,7 +263,7 @@ fn open_field(cipher: Option<&ArchiveCipher>, s: &str) -> String {
 // A key sitting in a readable file next to the data is a lock with the key
 // taped to it. On Windows the key file holds a DPAPI-wrapped blob instead:
 // only THIS user on THIS machine can unwrap it — the same model Chrome uses
-// for cookies. Raw extern, no new crate features (project convention, §8d).
+// for cookies. Raw extern, no new crate features.
 
 #[cfg(windows)]
 mod dpapi {

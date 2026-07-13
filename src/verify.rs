@@ -1,4 +1,4 @@
-//! Deterministic grounding verifier — anti-hallucination "Check 1" (MASTER_PLAN v8 §9[2]).
+//! Deterministic grounding verifier — anti-hallucination "Check 1".
 //!
 //! The small model reads grounded facts and produces an answer. This module is the
 //! code-side guard: every NUMBER and DATE that appears in the answer MUST also appear

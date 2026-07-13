@@ -236,7 +236,7 @@ fn main() {
         // localStorage — history persistence and the autostart-consent flag —
         // and (b) lets us enforce a Content-Security-Policy. This is the first
         // half of the v8 move to nic://app; the API still rides HTTP+token for
-        // now (MASTER_PLAN §8b — staged transport).
+        // now (staged transport).
         //
         // with_https_scheme(true) makes the origin `https://` (a secure context),
         // which is what lets the page's `fetch('http://127.0.0.1:…')` pass
@@ -251,7 +251,7 @@ fn main() {
                 .unwrap()
         })
         .with_url("nic://app")
-        // Navigation lockdown (MASTER_PLAN §2.1): only our own origin may load
+        // Navigation lockdown: only our own origin may load
         // inside the webview. Real external links open in the SYSTEM browser —
         // never let a click navigate the chat webview away (that would blank it).
         // Everything else (data:, file:, javascript:, redirects) is blocked.

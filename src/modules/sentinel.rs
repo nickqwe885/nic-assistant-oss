@@ -17,7 +17,7 @@ fn is_code_editor(app_name: &str) -> bool {
     EDITORS.iter().any(|e| lower.contains(e))
 }
 
-// ── Anti-cheat-friendly foreground guard (MASTER_PLAN §4) ───────────────────
+// ── Anti-cheat-friendly foreground guard ─────────────────────────────────────
 //
 // Screen capture must never run while a kernel-level anti-cheat (Riot Vanguard,
 // EAC, BattlEye) is active, or NIC looks like a cheat that reads the screen.
@@ -31,7 +31,7 @@ fn is_code_editor(app_name: &str) -> bool {
 
 /// True while a known game / anti-cheat process owns the foreground window.
 /// Writer: the foreground-hook thread (AcqRel). Reader: the screen-capture loop
-/// (Acquire). Explicit ordering per MASTER_PLAN §8d — never Relaxed.
+/// (Acquire). Explicit ordering — never Relaxed.
 static GAME_FOREGROUND: AtomicBool = AtomicBool::new(false);
 
 /// Screen-reading consent. Defaults to `false` so a fresh install captures
@@ -273,7 +273,7 @@ impl Sentinel {
         let tx_screen = self.tx.clone();
         let tx_clip   = self.tx.clone();
 
-        // Anti-cheat guard: passive foreground hook on its own OS thread (§4).
+        // Anti-cheat guard: passive foreground hook on its own OS thread.
         spawn_foreground_watch();
 
         // ── Task 1: Screen capture ────────────────────────────────────────────
@@ -299,10 +299,10 @@ impl Sentinel {
                     continue;
                 }
 
-                // Anti-cheat guard (§4): a known game / anti-cheat owns the
+                // Anti-cheat guard: a known game / anti-cheat owns the
                 // foreground — do not touch the screen, so kernel anti-cheats
                 // (Vanguard/EAC) never observe a capture. Set by the foreground
-                // hook thread; read here with Acquire (§8d).
+                // hook thread; read here with Acquire.
                 if game_in_foreground() {
                     continue;
                 }
@@ -378,7 +378,7 @@ impl Sentinel {
                     info!("[OCR]: Captured {} chars from active window.", frame.ocr_char_count);
                 }
 
-                // Secret shield (§privacy): seed phrases, card numbers and API
+                // Secret shield: seed phrases, card numbers and API
                 // keys are redacted BEFORE anything is persisted — they never
                 // reach the database, so they can never surface in an answer.
                 let description = crate::modules::scrubber::scrub(&frame.text_summary);

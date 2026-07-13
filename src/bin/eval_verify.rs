@@ -1,4 +1,4 @@
-//! Offline eval harness for the anti-hallucination verifier (MASTER_PLAN §9[2]).
+//! Offline eval harness for the anti-hallucination verifier.
 //!
 //! Measures `verify::verify_grounded` on a labelled fixture set: each case carries
 //! an answer, the grounding facts, and whether the answer SHOULD pass (every
@@ -36,7 +36,7 @@ const CASES: &[Case] = &[
 
 fn main() {
     let (mut pass, mut tp, mut tn, mut fp, mut miss) = (0usize, 0, 0, 0, 0);
-    println!("\n=== NIC verifier eval (§9[2]) — {} cases ===\n", CASES.len());
+    println!("\n=== NIC verifier eval — {} cases ===\n", CASES.len());
     for c in CASES {
         let got = is_grounded(c.answer, c.facts);
         let ok = got == c.expect;

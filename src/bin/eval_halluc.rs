@@ -1,8 +1,8 @@
-//! End-to-end hallucination harness (MASTER_PLAN §8c / §9[2] "eval-harness first").
+//! End-to-end hallucination harness.
 //!
 //! Fires factual prompts at a RUNNING NIC backend and checks each answer against
 //! must-contain / must-not-contain references, reporting a crude pass rate. This is
-//! the scaffold §8c calls for — extend `PROBES` with grounded cases over time.
+//! Extend `PROBES` with grounded cases over time.
 //!
 //! Needs the app running. Reads NIC_LOCAL_TOKEN (set by the launcher) and
 //! NIC_API_PORT (default 7878). Run: `cargo run --bin eval_halluc`.
@@ -37,7 +37,7 @@ fn main() {
     if token.is_empty() {
         eprintln!("NIC_LOCAL_TOKEN is empty — start the app first, or export the token it printed.");
     }
-    println!("\n=== NIC hallucination harness (§8c) → {url} ===\n");
+    println!("\n=== NIC hallucination harness -> {url} ===\n");
 
     let (mut pass, mut total) = (0usize, 0usize);
     for p in PROBES {

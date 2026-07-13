@@ -441,8 +441,11 @@ pub fn execute_intent(raw_code: &str) -> Option<ActionResult> {
             Some(do_screenshot().unwrap_or_else(|| ActionResult::new("Couldn't take a screenshot.")))
         }
         "SITE_OPEN" if !param.is_empty() => {
-            open_url(param);
-            info!("[Pilot/intent] SITE_OPEN: {}", param);
+            // The model often emits a bare domain ("github.com"); default to https.
+            let has_scheme = param.contains("://") || param.starts_with("ms-settings:");
+            let url = if has_scheme { param.to_string() } else { format!("https://{param}") };
+            open_url(&url);
+            info!("[Pilot/intent] SITE_OPEN");
             Some(ActionResult::new(format!("Opening {}.", friendly_url_label(param))))
         }
         "APP_OPEN" if !param.is_empty() => {
@@ -549,8 +552,24 @@ fn dry_run() -> bool {
     })
 }
 
+/// True for a URL we are willing to hand to the shell. `SITE_OPEN` targets come
+/// from the model's intent output, so restrict to web and known app schemes and
+/// reject shell metacharacters — `cmd start` re-parses its argument.
+fn is_safe_url(url: &str) -> bool {
+    let u = url.trim();
+    let scheme_ok = ["http://", "https://", "ms-settings:", "mailto:"]
+        .iter().any(|s| u.to_ascii_lowercase().starts_with(s));
+    let clean = !u.chars().any(|c| matches!(c, '&' | '|' | '^' | '<' | '>' | '"' | '\'' | '`' | '\n' | '\r')
+        || c.is_control());
+    scheme_ok && clean && u.len() <= 2048
+}
+
 pub(crate) fn open_url(url: &str) {
     if dry_run() { return; }
+    if !is_safe_url(url) {
+        info!("[Pilot] refused to open unsafe URL");
+        return;
+    }
     let _ = Command::new("cmd")
         .args(["/c", "start", "", url])
         .creation_flags(NO_WINDOW)
@@ -1289,6 +1308,21 @@ mod tests {
                 let _ = extract_exact_vol(&q);
             });
         }
+    }
+
+    #[test]
+    fn safe_urls_accepted_dangerous_rejected() {
+        assert!(is_safe_url("https://github.com"));
+        assert!(is_safe_url("http://127.0.0.1:7878"));
+        assert!(is_safe_url("ms-settings:"));
+        // cmd metacharacters — model output must never reach the shell with these.
+        assert!(!is_safe_url("https://x & calc"));
+        assert!(!is_safe_url("https://x\" | powershell"));
+        assert!(!is_safe_url("https://x\ncalc"));
+        // wrong scheme — no file/UNC/arbitrary handlers.
+        assert!(!is_safe_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_safe_url("\\\\evil\\share"));
+        assert!(!is_safe_url("javascript:alert(1)"));
     }
 
     #[test]

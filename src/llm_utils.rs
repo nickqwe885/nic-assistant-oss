@@ -41,7 +41,7 @@ impl LlmEngine {
                 "prompt":            prompt,
                 "n_predict":         max_tokens,
                 "stream":            true,
-                // Phase 2 (MASTER_PLAN v8 §3): the grounded/factual "reader" branch
+                // Phase 2: the grounded/factual "reader" branch
                 // passes 0.0 so the model reads the supplied facts instead of drifting
                 // — temperature is the cheapest guard against recombined-relation
                 // errors the numeric verifier can't catch; chat keeps a little warmth
@@ -65,7 +65,7 @@ impl LlmEngine {
             .send_string(&body.to_string())
             .map_err(|e| anyhow!("llama-server unreachable: {}", e))?;
 
-        // ── Two-phase timeout (MASTER_PLAN §3) ───────────────────────────────────
+        // ── Two-phase timeout ───────────────────────────────────────────────────
         // A dedicated reader thread forwards parsed SSE tokens over a channel; the
         // caller thread applies the budgets:
         //   • TTFT — up to 7 s for the FIRST token (prompt eval / lazy weight load).
@@ -126,7 +126,7 @@ impl LlmEngine {
     }
 }
 
-/// Message from the SSE reader thread to the timeout-watched caller (see §3).
+/// Message from the SSE reader thread to the timeout-watched caller.
 enum SseMsg {
     Token { tok: String, stop: bool },
     /// Stream ended (explicit `stop`, EOF, or a read error — caller keeps the partial).

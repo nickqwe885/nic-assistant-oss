@@ -115,8 +115,7 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
         }
     }
     // A clarification: "I mean the japanese street racer", "no I'm talking about …".
-    // Live, "no I am about japanese street racer and founder of top secret customs"
-    // was treated as a question and the model invented a founder named Kenjiro Kawai.
+    // Without this the model treats it as a question and invents an answer.
     for pat in ["i mean ", "i meant ", "i'm talking about ", "im talking about ",
                 "i am talking about ", "i am about ", "i'm about "] {
         if ql.starts_with(pat) {
@@ -136,10 +135,9 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
     None
 }
 
-/// People teach and command in one breath: "he is dota 2 player and streamer
-/// find him". Live, the whole sentence went into memory as the fact, so every
-/// later search carried the words "find him" into the query. Keep the fact, drop
-/// the order.
+/// People teach and command in one breath ("he is a dota 2 player, find him").
+/// Keep the fact for memory, drop the imperative tail so it never pollutes the
+/// search query.
 fn strip_trailing_command(fact: &str) -> &str {
     const TAILS: &[&str] = &[
         " find him", " find her", " find them", " find it", " find this",
@@ -621,7 +619,7 @@ struct PickModelResponse {
     message:          String,
 }
 
-/// §5/§7 BYO-GGUF from the UI: opens the native file explorer, lets the user point
+/// BYO-GGUF from the UI: opens the native file explorer, lets the user point
 /// at an existing .gguf, copies it onto the (ASCII) model path, and asks for a
 /// restart to load it — the same restart-to-apply flow as /models/select. On next
 /// start `ensure_ready` sees the file at model_path and loads it directly.
@@ -666,9 +664,9 @@ async fn handle_model_pick_gguf(
 
 
 
-// ── Anti-hallucination fallback (MASTER_PLAN §3 / §9[2]) ───────────────────────
+// ── Anti-hallucination fallback ───────────────────────────────────────────────
 // Notices shown when we refuse to surface a possibly-fabricated answer and fall
-// back to the raw retrieved matches. English-only beta (§9[1]).
+// back to the raw retrieved matches.
 const RAW_NOTICE_TIMEOUT: &str =
     "⚠️ Model verification was interrupted (timeout). Showing the raw text matches I found:";
 const RAW_NOTICE_TIMEOUT_TAIL: &str =
@@ -729,10 +727,9 @@ fn no_bluff_person_prompt(name: &str) -> String {
     )
 }
 
-/// The same refusal for a subject that may not be a person ("tell me about donk"
-/// could be anyone or anything). Fires when nothing — screen memory OR the web —
-/// mentions it, which is exactly when the model starts inventing: live, a
-/// Counter-Strike player came back as a Donkey Kong biography.
+/// The same refusal for a subject that may not be a person ("tell me about X").
+/// Fires when neither screen memory nor the web mentions it — the point at which
+/// the model would otherwise invent an answer.
 fn no_bluff_subject_prompt(name: &str) -> String {
     format!(
         "I found nothing on {name} — not in your screen memory, and not on the web \
@@ -815,15 +812,13 @@ fn person_in_question(query: &str) -> Option<String> {
 }
 
 /// The subject of an "about"-style question ("tell me about donk" → "donk").
-/// Deliberately broader than `person_in_question`: it also catches concepts, and
-/// that is fine — this only decides WHAT the conversation is currently on. Without
-/// it, "tell me about donk" tracked nobody, so the user's own correction ("I am
-/// about the cs 2 player donk") had nothing to attach to, fell through to the
-/// model, and came back as a confident invented esports biography.
+/// Deliberately broader than `person_in_question` — it also catches concepts —
+/// because it only decides what the conversation is currently on, so a later
+/// correction ("I mean the cs 2 player") has something to attach to.
 fn about_subject(query: &str) -> Option<String> {
     let q = strip_openers(query.trim());
     let ql = q.to_lowercase();
-    // English-only beta (§9[1]) — no new Russian goes into the router.
+    // English-only beta — no Russian in the router.
     const ABOUT_LEADS: &[&str] = &[
         "tell me more about ", "tell me about ", "tell about ", "tell me smth about ",
         "what do you know about ", "what can you tell me about ", "do you know about ",
@@ -843,9 +838,7 @@ fn about_subject(query: &str) -> Option<String> {
     let first = rest.split_whitespace().next()?.to_lowercase();
     let first = first.trim_matches(|c: char| !c.is_alphanumeric());
     // Self-reference and pronouns are not topics: "tell me about yourself" is a
-    // persona question, "tell me about him" is a follow-up the QA path resolves.
-    // People type "ur" and "u" — live, "could u tell me about ur political view"
-    // was refused as if "ur political view" were a stranger's name.
+    // persona question, "tell me about him" is a follow-up. Includes "ur"/"u".
     if matches!(first, "you" | "u" | "yourself" | "urself" | "your" | "ur" | "yours"
                      | "me" | "myself" | "my" | "mine" | "us" | "our" | "we"
                      | "him" | "his" | "her" | "hers" | "them" | "their" | "they"
@@ -865,11 +858,10 @@ fn entity_in_question(query: &str) -> Option<String> {
 }
 
 /// Appended when the model answers about a NAMED thing that no source backs.
-/// Live eval: asked for "the Karakov-Feldstein theorem" (invented), it produced a
-/// confident fake — attributed to fake mathematicians, with a fake date. Refusing
-/// outright would also kill legitimate answers ("explain Newton's second law"), so
-/// instead we label the answer honestly. An assistant that admits when it's guessing
-/// is more trustworthy than one that is silently right most of the time.
+/// The model confidently invents theorems, people and dates; refusing outright
+/// would also kill legitimate answers, so we label the answer instead of hiding
+/// it. Admitting a guess is more trustworthy than being silently right most of
+/// the time.
 const UNVERIFIED_CAVEAT: &str =
     "⚠️ No source backs this — it comes from the model's own training and may be \
 wrong or entirely invented. Ask me to search the web to verify.";
@@ -928,7 +920,7 @@ fn person_is_grounded(name: &str, lib_ctx: &str, surf_ctx: &str) -> bool {
         .any(|w| hay.contains(&w))
 }
 
-/// True when the engine aborted under the two-phase generation timeout (§3),
+/// True when the engine aborted under the two-phase generation timeout,
 /// rather than failing for a real error. Lets the API switch to the raw-snippet path.
 fn is_gen_timeout(e: &anyhow::Error) -> bool {
     let m = e.to_string();
@@ -1125,7 +1117,7 @@ async fn handle_query(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Two-phase timeout + anti-hallucination (MASTER_PLAN §3 / §9[2]):
+    // Two-phase timeout + anti-hallucination:
     //   • a TTFT/idle abort is NOT a server error → show the raw matches, not a 500;
     //   • Check 1 — every number/date in a web-grounded answer must be backed by the
     //     snippets, else the model invented it → show the raw matches, not the fiction.
@@ -1249,7 +1241,7 @@ async fn handle_query_stream(
                                 if !out.is_empty() { let _ = tx2.blocking_send(out); }
                             })
                         }).await;
-                        // Anti-hallucination Check 1 (§9[2]): warn if the streamed answer's
+                        // Grounding check: warn if the streamed answer's
                         // figures aren't backed by the snippets (stream can't be retracted).
                         if let Ok(Ok(ref raw)) = gen {
                             let ans = crate::modules::thinker::extract_answer(raw);
@@ -1347,7 +1339,7 @@ async fn handle_query_stream(
             // English back-references (English-only beta).
             "it", "its", "that", "this", "these", "those", "they", "them", "their",
             "there", "he", "she", "his", "her", "more",
-            // Legacy Russian (harmless when RU is never typed).
+
         ];
         let has_ref = ql.split_whitespace()
             .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()))
@@ -1500,7 +1492,7 @@ async fn handle_query_stream(
                             let out = if filter_cjk { strip_cjk(token) } else { token.to_string() };
                             if !out.is_empty() { let _ = cb_tx.blocking_send(out); }
                         });
-                        // Anti-hallucination Check 1 (§9[2]): verify the streamed answer
+                        // Grounding check: verify the streamed answer
                         // against the snippets it was handed; the stream can't be retracted,
                         // so warn if a figure isn't backed by the sources.
                         if let Ok(ref raw) = r {
@@ -1544,7 +1536,7 @@ async fn handle_query_stream(
                         "Hmm, I can't answer that yet — maybe I haven't recorded enough. Try rephrasing?".to_string()
                     ).await;
                 } else {
-                    // Anti-hallucination Check 1 (§9[2]): a web-grounded answer whose
+                    // Grounding check: a web-grounded answer whose
                     // numbers/dates aren't backed by the snippets gets a caveat. The
                     // stream is already on screen (can't retract), so we append a note.
                     if !surf_ctx.trim().is_empty() && !crate::verify::is_grounded(&answer, &surf_ctx) {
@@ -1578,7 +1570,7 @@ async fn handle_query_stream(
                 }
             }
             Ok(Err(ref e)) if is_gen_timeout(e) => {
-                // Two-phase timeout (§3). A TTFT abort streamed nothing → show the raw
+                // Two-phase timeout. A TTFT abort streamed nothing -> show the raw
                 // matches; an idle abort already streamed a partial → append a notice.
                 if e.to_string().contains("NIC_TTFT_TIMEOUT") {
                     let _ = tx.send(raw_snippet_fallback(&lib_ctx, &surf_ctx, RAW_NOTICE_TIMEOUT)).await;
@@ -1711,9 +1703,9 @@ async fn handle_export(
 
 // ── Diagnostics (user-driven bug reports; NIC ships zero telemetry) ────────────
 
-/// A copy-pasteable diagnostics blob for GitHub issues. Deliberately contains
-/// NO memory content — only versions, hardware, sizes, and the tail of the log
-/// (which already avoids logging screen text). The user triggers it explicitly.
+/// A copy-pasteable diagnostics blob for GitHub issues. Contains no memory
+/// content: versions, hardware, sizes, and a redacted, secret-scrubbed log tail.
+/// User-triggered.
 async fn handle_diagnostics(State(state): State<ApiState>) -> impl IntoResponse {
     let (db_bytes, archive_bytes) = state.librarian.disk_usage();
     let event_count = state.librarian.count_events().await;
@@ -1756,17 +1748,35 @@ async fn handle_diagnostics(State(state): State<ApiState>) -> impl IntoResponse 
     (StatusCode::OK, [("content-type", "text/plain; charset=utf-8")], text)
 }
 
-/// Returns the last `n` lines of the app log, or a placeholder. Best-effort.
+/// Returns the last `n` log lines, redacted for diagnostics. Users paste this
+/// into GitHub issues, so PRIVACY.md promises it holds no memory content: a few
+/// Pilot/MediaRouter lines echo the user's own search terms, so the text after
+/// those markers is dropped, and the whole tail runs through the secret scrubber.
 fn read_log_tail(n: usize) -> String {
     let path = crate::config::app_bin_dir().join("logs").join("nic.log");
-    match std::fs::read_to_string(&path) {
-        Ok(s) => {
-            let lines: Vec<&str> = s.lines().collect();
-            let start = lines.len().saturating_sub(n);
-            lines[start..].join("\n")
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => return format!("(could not read log at {}: {e})", path.display()),
+    };
+    let lines: Vec<&str> = raw.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    let redacted: Vec<String> = lines[start..].iter().map(|l| redact_log_line(l)).collect();
+    crate::modules::scrubber::scrub(&redacted.join("\n"))
+}
+
+/// Drops the free-text tail of log lines that echo a user's query or search term,
+/// keeping the marker so the line still tells you what happened.
+fn redact_log_line(line: &str) -> String {
+    const CONTENT_MARKERS: &[&str] = &[
+        "search: ", "search for ", "ytdl: ", "play by name: ", "MEDIA_PLAY",
+        "YT_SEARCH", "WEB_SEARCH", "fallback → ",
+    ];
+    for m in CONTENT_MARKERS {
+        if let Some(i) = line.find(m) {
+            return format!("{}{} […]", &line[..i], m.trim_end());
         }
-        Err(e) => format!("(could not read log at {}: {e})", path.display()),
     }
+    line.to_string()
 }
 
 // ── Update check (manual — NIC never phones home on its own) ───────────────────
@@ -2520,7 +2530,7 @@ mod tests {
 
     #[test]
     fn about_questions_name_the_current_subject() {
-        // Live: "hi assistant could u tell me about donk" tracked nobody, so the
+        // Regression: "hi assistant could u tell me about donk" tracked nobody, so the
         // user's own correction a turn later had nothing to attach to.
         assert_eq!(
             about_subject("hi assistant could u tell me about donk").as_deref(),
@@ -2539,14 +2549,14 @@ mod tests {
         assert!(about_subject("tell me about him").is_none());        // follow-up pronoun
         assert!(about_subject("tell me about my day").is_none());     // about the user
         assert!(about_subject("what is gravity").is_none());          // not an "about" lead
-        // Live: this was refused as though "ur political view" were a stranger's name.
+        // Regression: this was refused as though "ur political view" were a stranger's name.
         assert!(about_subject("could u tell me about ur political view").is_none());
         assert!(about_subject("tell me about your memory").is_none());
     }
 
     #[test]
     fn a_taught_fact_never_swallows_the_order_that_followed_it() {
-        // Live: "he is dota 2 player and streamer find him" was stored whole, so every
+        // Regression: "he is dota 2 player and streamer find him" was stored whole, so every
         // later search carried the words "find him" into the query.
         let Some(EntityUpdate::Fact(f)) = entity_statement("he is dota 2 player and streamer find him")
         else { panic!("not read as a fact") };
@@ -2573,6 +2583,20 @@ mod tests {
     }
 
     // ── host_is_local (DNS-rebinding gate) ────────────────────────────────────
+
+    #[test]
+    fn diagnostics_log_redaction_drops_query_content() {
+        // Search terms and media queries must not survive into a pasted bug report.
+        assert_eq!(redact_log_line("[Pilot] Google search: my private illness"),
+                   "[Pilot] Google search: […]");
+        assert_eq!(redact_log_line("[MediaRouter] mpv ytdl: some embarrassing video"),
+                   "[MediaRouter] mpv ytdl: […]");
+        assert_eq!(redact_log_line("[Pilot/intent] WEB_SEARCH: bank account number"),
+                   "[Pilot/intent] WEB_SEARCH […]");
+        // Non-content lines pass through untouched.
+        let plain = "[PERF] Vector Search & Librarian write: 12 ms (fresh=true)";
+        assert_eq!(redact_log_line(plain), plain);
+    }
 
     #[test]
     fn loopback_hosts_are_accepted() {
@@ -2608,7 +2632,7 @@ mod tests {
 
     #[test]
     fn user_statements_about_a_person_are_captured() {
-        // Live: "who is lens" → "he is a dota 2 player" was answered with a
+        // Regression: "who is lens" → "he is a dota 2 player" was answered with a
         // definition of an optical lens. It is a STATEMENT, not a question.
         assert!(matches!(entity_statement("he is a dota 2 player"),
                          Some(EntityUpdate::Fact(f)) if f == "dota 2 player"));
@@ -2622,7 +2646,7 @@ mod tests {
 
     #[test]
     fn greeting_before_a_question_still_gates() {
-        // Live: "hi who is smoky nagata?" skipped the gate and the model answered
+        // Regression: "hi who is smoky nagata?" skipped the gate and the model answered
         // that he played John McClane in Die Hard.
         assert_eq!(person_in_question("hi who is smoky nagata?").as_deref(), Some("smoky nagata"));
         assert_eq!(person_in_question("hey, who is Bulkin").as_deref(), Some("Bulkin"));
@@ -2631,7 +2655,7 @@ mod tests {
 
     #[test]
     fn politeness_wrapped_questions_still_gate() {
-        // Live: "hi nic could u say me who is kyosuke" → the model invented an
+        // Regression: "hi nic could u say me who is kyosuke" → the model invented an
         // anime character. The lead can sit anywhere in the sentence.
         assert_eq!(
             person_in_question("hi nic could u say me who is kyosuke").as_deref(),
@@ -2643,7 +2667,7 @@ mod tests {
 
     #[test]
     fn stretched_negation_still_reads_as_a_correction() {
-        // Live: "nooo I am about cs 2 player" → the model explained that
+        // Regression: "nooo I am about cs 2 player" → the model explained that
         // "C.S. 2 Player refers to two players playing Counter-Strike".
         assert!(matches!(entity_statement("nooo I am about cs 2 player"),
                          Some(EntityUpdate::Fact(f)) if f == "cs 2 player"));
@@ -2653,7 +2677,7 @@ mod tests {
 
     #[test]
     fn clarifications_are_captured_as_facts() {
-        // Live: "no I am about japanese street racer and founder of top secret
+        // Regression: "no I am about japanese street racer and founder of top secret
         // customs" was answered with an invented founder, Kenjiro Kawai.
         assert!(matches!(
             entity_statement("no I am about japanese street racer and founder of top secret customs"),
@@ -2680,7 +2704,7 @@ mod tests {
 
     #[test]
     fn lowercase_names_are_still_people() {
-        // Shipped bug: "who is qewbite" (no capital) slipped past the gate, so the
+        // Regression: "who is qewbite" (no capital) slipped past the gate, so the
         // model answered "I am NIC-assistant" instead of admitting it never heard
         // of him. People do not capitalise usernames.
         assert_eq!(person_in_question("who is qewbite").as_deref(), Some("qewbite"));
@@ -2920,7 +2944,7 @@ mod tests {
         assert!(super::parse_stored_qa("Q: no answer marker").is_none());
     }
 
-    // ── two-phase timeout + raw-snippet fallback (§3) ─────────────────────────
+    // ── two-phase timeout + raw-snippet fallback ─────────────────────────────
     #[test]
     fn gen_timeout_detects_sentinels_only() {
         assert!(super::is_gen_timeout(&anyhow::anyhow!("NIC_TTFT_TIMEOUT")));

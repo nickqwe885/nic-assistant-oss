@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use crate::llm_utils::LlmEngine;
 use crate::config::ProfileConfig;
 
-// English-only beta (MASTER_PLAN §9[1]). The model emits flat text in two
+// English-only beta. The model emits flat text in two
 // pseudo-HTML blocks — <think> for reasoning, <answer> for the user-facing reply
-// — which Qwen2.5-1.5B produces reliably (v8 §3). The frontend shows only the
+// — which Qwen2.5-1.5B produces reliably. The frontend shows only the
 // <answer>; the backend stores only the <answer> (see `extract_answer`).
 //
 // `language` is accepted for signature stability but the beta is English-only.
@@ -178,7 +178,7 @@ impl Thinker {
 }
 
 
-/// Temperature for the answer branch (Phase 2, MASTER_PLAN v8 §3). When the bundle
+/// Temperature for the answer branch (Phase 2). When the bundle
 /// carries real grounding facts ("Screen history:" / "Web results:") the model must
 /// READ them, not improvise — so decode greedily at temp 0, the cheapest guard
 /// against recombined-relation drift the numeric verifier can't catch. Ungrounded
@@ -232,10 +232,9 @@ fn build_profile_block(p: &ProfileConfig) -> String {
 /// reasoning or the tags. Tags are ASCII, so byte-index slicing stays on char
 /// boundaries.
 pub fn extract_answer(raw: &str) -> String {
-    // A 1.5B model does not always close its tags in order. Live, "what is gravity"
-    // came back as "<answer>…</think>\n<answer>…", and reading the FIRST <answer>
-    // block shipped the reasoning — tags and all — straight to the user. So close
-    // the reasoning first, whatever shape it arrived in, and only then read the reply.
+    // A 1.5B model does not always close its tags in order (e.g. a stray second
+    // <answer>), so close the reasoning at the LAST </think> first, then read the
+    // reply — otherwise the reasoning and tags can leak to the user.
     let mut s = match raw.rfind("</think>") {
         Some(i) => raw[i + "</think>".len()..].to_string(),
         // No closing tag. If reasoning started and never finished, there is no
@@ -297,7 +296,7 @@ mod tests {
 
     #[test]
     fn tags_out_of_order_never_leak() {
-        // Live, "what is gravity" came back with the tags scrambled and the user
+        // Regression: "what is gravity" came back with the tags scrambled and the user
         // was shown the reasoning plus a literal "</think>\n<answer>".
         assert_eq!(
             extract_answer(

@@ -225,7 +225,7 @@ impl Surfer {
         let q = query.to_lowercase();
 
         let negation_block = [
-            // English-only beta (§9[1])
+            // English-only beta
             "don't search", "do not search", "no internet", "without internet",
             "offline", "locally", "local only",
         ];
@@ -240,7 +240,7 @@ impl Surfer {
             // General knowledge — model knows these
             // Coding / generation tasks
             // Math
-            // English-only beta (§9[1]) — mirror the categories above.
+            // English-only beta — mirror the categories above.
             "who are you", "what are you", "your name", "what can you do",
             "tell me about yourself", "what do you do",
             "remind", "my screen", "my terminal", "on my system", "my version",
@@ -269,7 +269,7 @@ impl Surfer {
             // Historical facts
             // People and characters
             // Misc facts
-            // English-only beta (§9[1]) — realtime / factual signals.
+            // English-only beta — realtime / factual signals.
             "news", "today", "latest", "right now", "current",
             "weather", "forecast",
             "price", "cost", "how much", "stock", "bitcoin", "crypto",
@@ -300,13 +300,10 @@ impl Surfer {
     }
 
     /// Search unconditionally — the caller has already decided the web is needed.
-    ///
-    /// `needs_internet` is a keyword allowlist ("who is", "price", "news"…), and a
-    /// bare name trips none of them. Live, "tell me about donk" therefore never
-    /// reached the internet at all: the model answered from its own imagination
-    /// (a Donkey Kong biography, then an invented Team Liquid player) while the one
-    /// source that actually knew the answer was never consulted. When the API knows
-    /// the user is asking about a person, it says so — and we go and look.
+    /// `needs_internet` is a keyword allowlist that a bare name trips none of, so
+    /// a question about a person would never reach the web and the model would
+    /// invent an answer. When the API knows a person is being asked about, it calls
+    /// this directly.
     pub async fn search_web(&self, query: &str) -> Option<String> {
         info!("[Surfer] Web search…");
         match self.fetch_snippets(query).await {

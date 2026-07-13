@@ -946,7 +946,7 @@ document.getElementById('btn-donate').onclick = async () => {
 document.getElementById('btn-close').onclick = () => window.ipc.postMessage('close');
 document.getElementById('btn-min').onclick   = () => window.ipc.postMessage('minimize');
 
-// §5/§7 BYO-GGUF: pick an existing .gguf via the native file explorer. The backend
+// BYO-GGUF: pick an existing .gguf via the native file explorer. The backend
 // copies it onto the model path; a restart loads it. fetch is auth-wrapped above.
 document.getElementById('btn-model').onclick = async () => {
   try {
@@ -1274,7 +1274,7 @@ function addAiMsg() {
   return { bubble, cursor, meta, dots };
 }
 
-// Strip the model's <think> reasoning, show only the <answer> (v8 §3). We keep
+// Strip the model's <think> reasoning, show only the <answer>. We keep
 // the full streamed buffer and re-derive the visible text each token, so a tag
 // split across tokens never flashes. Tag-free text passes through unchanged
 // (fallback for a model that ignores the format, and for non-LLM streams).
