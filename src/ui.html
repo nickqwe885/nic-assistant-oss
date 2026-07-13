@@ -667,24 +667,6 @@ const I18N = {
                 error:'Error', erased:n=>`Erased ${n} events from the last 15 min`,
                 examples:['Open YouTube','What was I just doing?','Summarize my recent activity'],
                 acWarn:'NIC reads your screen to build memory. Competitive games with kernel anti-cheat (Valorant, Faceit, EAC, BattlEye) may flag it — close NIC before playing them.', acOk:'Got it' },
-  Russian:    { incognito:'Инкогнито', forget:'Забыть 15 мин', minimize:'Свернуть', close:'Закрыть',
-                welcome:'Задайте вопрос — я отвечу используя вашу память и интернет', ask:'Спросите что-нибудь…',
-                connecting:'соединение…', starting:'запуск…', online:'онлайн', events:'событий',
-                offline:'nic-assistant недоступен — запустите nic-assistant.exe',
-                incOn:'Инкогнито: ВКЛ', incognitoOn:'Инкогнито включён', incognitoOff:'Инкогнито выключен',
-                error:'Ошибка', erased:n=>`Удалено ${n} событий за 15 мин`,
-                copy:'Копировать', copied:'Скопировано',
-                examples:['Что я делал час назад?','Найди сайт, что я недавно смотрел','Сделай сводку моей активности'],
-                acWarn:'NIC читает экран, чтобы запоминать. Соревновательные игры с kernel-античитом (Valorant, Faceit, EAC, BattlEye) могут это пометить — закрывайте NIC перед такими играми.', acOk:'Понятно' },
-  Kazakh:     { incognito:'Инкогнито', forget:'15 мин ұмыту', minimize:'Жию', close:'Жабу',
-                welcome:'Сұрақ қойыңыз — жадыңыз бен интернетті қолданып жауап беремін', ask:'Бірдеңе сұраңыз…',
-                connecting:'қосылуда…', starting:'іске қосылуда…', online:'желіде', events:'оқиға',
-                offline:'nic-assistant қолжетімсіз — nic-assistant.exe іске қосыңыз',
-                incOn:'Инкогнито: ҚОСУЛЫ', incognitoOn:'Инкогнито қосылды', incognitoOff:'Инкогнито өшірілді',
-                error:'Қате', erased:n=>`Соңғы 15 минутта ${n} оқиға өшірілді`,
-                copy:'Көшіру', copied:'Көшірілді',
-                examples:['Бір сағат бұрын не істедім?','Жақында қараған сайтты тап','Соңғы әрекетімді қорытындыла'],
-                acWarn:'NIC жадын құру үшін экранды оқиды. Kernel-античиті бар ойындар (Valorant, Faceit, EAC, BattlEye) мұны белгілеуі мүмкін — ондай ойындар алдында NIC-ті жабыңыз.', acOk:'Түсінікті' },
   Spanish:    { incognito:'Incógnito', forget:'Olvidar 15 min', minimize:'Minimizar', close:'Cerrar',
                 welcome:'Pregunta lo que quieras — respondo usando tu memoria e internet', ask:'Pregunta algo…',
                 connecting:'conectando…', starting:'iniciando…', online:'en línea', events:'eventos',
@@ -709,12 +691,6 @@ const I18N = {
                 offline:'nic-assistant 不可用 — 请运行 nic-assistant.exe',
                 incOn:'隐身：开', incognitoOn:'隐身已开启', incognitoOff:'隐身已关闭',
                 error:'错误', erased:n=>`已删除最近15分钟的 ${n} 个事件` },
-  Ukrainian:  { incognito:'Інкогніто', forget:'Забути 15 хв', minimize:'Згорнути', close:'Закрити',
-                welcome:'Запитайте — відповім, використовуючи вашу памʼять та інтернет', ask:'Запитайте щось…',
-                connecting:'зʼєднання…', starting:'запуск…', online:'онлайн', events:'подій',
-                offline:'nic-assistant недоступний — запустіть nic-assistant.exe',
-                incOn:'Інкогніто: УВІМК', incognitoOn:'Інкогніто увімкнено', incognitoOff:'Інкогніто вимкнено',
-                error:'Помилка', erased:n=>`Видалено ${n} подій за 15 хв` },
 };
 let L = I18N.English;
 function applyI18n(lang) {
@@ -995,8 +971,6 @@ async function probeHealth(url) {
 // "connecting…". Phase index matches src/boot.rs::Phase.
 const BOOT_PHASES = {
   English: ['starting…','downloading engine','downloading model','loading model','building memory','ready','startup error'],
-  Russian: ['запуск…','скачиваю движок','скачиваю модель','загружаю модель','строю память','готово','ошибка запуска'],
-  Kazakh:  ['іске қосылуда…','қозғалтқыш жүктелуде','модель жүктелуде','модель оқылуда','жад құрылуда','дайын','іске қосу қатесі'],
 };
 function navLang() {
   const n = (navigator.language || 'en').toLowerCase();
@@ -1404,8 +1378,8 @@ async function saveIdea(text) {
 async function doSend() {
   const raw = $query.value.trim();
   if (!raw || streaming || !online) return;
-  // Idea-writer: "идея: …" / "заметка: …" / "запиши: …" → structure & save a note.
-  const ideaM = raw.match(/^\s*(?:идея|заметка|запиши|idea|note|save)\s*[:\-—]\s*([\s\S]+)/i);
+  // Idea-writer: "idea: …" / "note: …" / "save: …" → structure & save a note.
+  const ideaM = raw.match(/^\s*(?:idea|note|save)\s*[:\-—]\s*([\s\S]+)/i);
   if (ideaM) { saveIdea(ideaM[1].trim()); return; }
   const q = raw;
   dismissMagic();               // the user is talking now — retire the first-run nudge

@@ -236,7 +236,7 @@ fn main() {
         // localStorage — history persistence and the autostart-consent flag —
         // and (b) lets us enforce a Content-Security-Policy. This is the first
         // half of the v8 move to nic://app; the API still rides HTTP+token for
-        // now (MASTER_PLAN §8б — staged transport).
+        // now (MASTER_PLAN §8b — staged transport).
         //
         // with_https_scheme(true) makes the origin `https://` (a secure context),
         // which is what lets the page's `fetch('http://127.0.0.1:…')` pass

@@ -674,10 +674,10 @@ impl Librarian {
     }
 
     /// Deterministic "iron retelling" of recent activity: a natural summary
-    /// sentence (e.g. "Вчера ты смотрел видео и работал в коде.") followed by a
+    /// sentence (e.g. "Yesterday you watched videos and worked on code.") followed by a
     /// clean, time-stamped list — composed ENTIRELY in code, no LLM. Reads like
     /// a human summary yet is identical and reliable on any model size, and
-    /// instant. This is the direct answer to "что я делал / смотрел".
+    /// instant. This is the direct answer to "what did I do / watch".
     pub async fn activity_summary(&self, n: usize) -> String {
         let all = self.collect_recent_activity().await;
         if all.is_empty() {
@@ -948,29 +948,29 @@ impl Librarian {
         }
 
         format!(
-            "[STRESS_TEST] Оценка хранилища:\n\
+            "[STRESS_TEST] Storage estimate:\n\
              ─────────────────────────────────────────\n\
-             avg OCR текст:            {} chars\n\
+             avg OCR text:             {} chars\n\
              embedding (BERT-384):     {} bytes\n\
              JSON + LanceDB overhead:  {} bytes\n\
-             Итого на запись:          {} байт (~{})\n\
+             Total per record:         {} bytes (~{})\n\
              \n\
-             Для {} записей (сырые L0): {}\n\
+             For {} records (raw L0):  {}\n\
              \n\
-             Реальные условия (20%% кадров проходят фильтры):\n\
-             Теоретически/день:        {} снимков\n\
-             Фактически/день:          {} снимков\n\
-             L0 в день (до сжатия):    {}\n\
-             L1 sub_events в день:     {} (8 hourly records)\n\
-             Archive .ndjson/день:     {}\n\
+             Real conditions (20%% of frames pass the filters):\n\
+             Theoretical/day:          {} captures\n\
+             Actual/day:               {} captures\n\
+             L0 per day (uncompressed): {}\n\
+             L1 sub_events per day:    {} (8 hourly records)\n\
+             Archive .ndjson/day:      {}\n\
              \n\
-             За 7 дней:\n\
+             Over 7 days:\n\
              Archive .ndjson:          {}\n\
-             Level-1 в DB:             {}\n\
-             После L1→L2 сжатия DB:   < 1 MB (topic nodes)\n\
-             Итого на диске:           ~{}\n\
+             Level-1 in DB:            {}\n\
+             After L1→L2 compaction:   < 1 MB (topic nodes)\n\
+             Total on disk:            ~{}\n\
              ─────────────────────────────────────────\n\
-             Вывод: «Детальная память» не съест диск.",
+             Conclusion: detailed memory does not eat the disk.",
             avg_ocr_chars, EMBEDDING_BYTES, JSON_OVERHEAD + LANCEDB_META,
             per_record, fmt_bytes(per_record),
             n, fmt_bytes(n * per_record),
@@ -1141,7 +1141,7 @@ impl Librarian {
         //
         // For GENERAL (non-screen) questions also drop raw screen-capture events
         // (real app names), keeping only dialogue/notes — otherwise a question
-        // like "какой сайт самый быстрый" pulls in screen OCR and the small model
+        // like "which site is the fastest" pulls in screen OCR and the small model
         // parrots the latest screen line instead of answering.
         let raw_rows: Vec<UnifiedRow> = raw_rows_all.into_iter()
             .filter(|r| {
@@ -2069,12 +2069,12 @@ fn known_site(s: &str) -> Option<&'static str> {
     let l = s.to_lowercase();
     const SITES: &[(&str, &str)] = &[
         ("youtube", "YouTube"), ("youtu.be", "YouTube"),
-        ("wikipedia", "Wikipedia"), ("википеди", "Wikipedia"),
+        ("wikipedia", "Wikipedia"),
         ("github", "GitHub"), ("reddit", "Reddit"), ("twitch", "Twitch"),
-        ("vk.com", "VK"), ("вконтакте", "VK"),
+        ("vk.com", "VK"),
         ("telegram", "Telegram"), ("stack overflow", "Stack Overflow"),
-        ("habr", "Habr"), ("хабр", "Habr"),
-        ("kinopoisk", "Kinopoisk"), ("кинопоиск", "Kinopoisk"),
+        ("habr", "Habr"),
+        ("netflix", "Netflix"),
         ("soundcloud", "SoundCloud"), ("spotify", "Spotify"),
     ];
     SITES.iter().find(|(n, _)| l.contains(n)).map(|(_, label)| *label)
@@ -2083,7 +2083,7 @@ fn known_site(s: &str) -> Option<&'static str> {
 /// Deterministically turns a screen event's (app, window title) into ONE clean,
 /// human log phrase — no OCR, no LLM — so recall reads well on ANY model. The
 /// window title is structured by the app itself (page/file/project), so this is
-/// reliable: "смотрел «Обзор iOS 27» на YouTube", "работал в VS Code: nic-assistant".
+/// reliable: "watched «iOS 27 review» on YouTube", "worked in VS Code: nic-assistant".
 /// Strips a leading unread/tab counter that browsers prepend to the window
 /// title, e.g. "(20) Real Page Title" → "Real Page Title".
 fn strip_leading_count(s: &str) -> &str {
@@ -2156,8 +2156,8 @@ fn activity_line(app: &str, title: &str) -> String {
 }
 
 /// Coarse activity bucket as a 2nd-person past-tense verb phrase, used to build
-/// the natural intro of `activity_summary` (e.g. "смотрел видео и работал в
-/// коде"). Masculine past is the conventional Russian default. Pure & cheap.
+/// the natural intro of `activity_summary` (e.g. "watched videos and worked on
+/// code"). Pure & cheap.
 fn activity_category(app: &str, title: &str) -> &'static str {
     let app_l = app.to_lowercase();
     let full  = format!("{} {}", app_l, title.to_lowercase());
@@ -2165,11 +2165,11 @@ fn activity_category(app: &str, title: &str) -> &'static str {
     const BROWSERS: &[&str] = &["firefox", "chrome", "edge", "opera", "yandex",
                                 "brave", "chromium", "safari", "mozilla"];
     if BROWSERS.iter().any(|b| app_l.contains(b)) {
-        if ["youtube", "youtu.be", "twitch", "kinopoisk", "кинопоиск", "rutube"]
+        if ["youtube", "youtu.be", "twitch", "netflix", "rutube"]
             .iter().any(|s| full.contains(s)) {
             return "watched videos";
         }
-        if ["soundcloud", "spotify", "music.yandex", "яндекс.музык"]
+        if ["soundcloud", "spotify", "apple music"]
             .iter().any(|s| full.contains(s)) {
             return "listened to music";
         }
@@ -2180,15 +2180,15 @@ fn activity_category(app: &str, title: &str) -> &'static str {
         .iter().any(|e| app_l.contains(e)) {
         return "worked on code";
     }
-    if ["telegram", "discord", "whatsapp", "vk.com", "вконтакте", "slack"]
+    if ["telegram", "discord", "whatsapp", "vk.com", "slack"]
         .iter().any(|m| full.contains(m)) {
         return "chatted in messengers";
     }
     "worked in apps"
 }
 
-/// Capitalised relative day for the activity-summary intro: "Сегодня" (< 24 h),
-/// "Вчера" (24–48 h), else "Недавно".
+/// Capitalised relative day for the activity-summary intro: "Today" (< 24 h),
+/// "Yesterday" (24-48 h), else "Recently".
 fn when_word(ts_micros: i64) -> &'static str {
     let secs = (Utc::now().timestamp_micros() - ts_micros) / 1_000_000;
     if secs < 86_400        { "Today" }
@@ -2206,20 +2206,13 @@ fn embed_cache_key(text: &str) -> String {
 
 /// Narrow, unambiguous "my own past activity" check ("what did I do / what
 /// happened / which apps"). For these queries we (a) always include the screen
-/// timeline and (b) skip the web, so an empty «Из интернета» section can't
+/// timeline and (b) skip the web, so an empty "Web results" section can't
 /// distract the model from the timeline. Kept separate from `is_screen_query`
-/// because that one also matches bare time words ("сегодня", "недавно") that
+/// because that one also matches bare time words ("today", "recently") that
 /// legitimately need the web.
 pub(crate) fn is_activity_recall(query: &str) -> bool {
     let q = query.to_lowercase();
-    ["что я делал", "что делал", "чем занимался", "чем я занимался",
-     "что я сделал", "что происходило", "что я запускал", "что запускал",
-     "какие приложения", "какие программы", "что я смотрел", "что смотрел",
-     "что я читал", "что читал", "что было на экране", "что открывал",
-     "что я открывал", "моя активность", "мою активность", "чем я занят",
-     "в течение сесси", "за сессию", "за эту сессию", "что я тут делал",
-     "что я делаю", "чем занят",
-     // English-only beta. Kept generous on purpose: the screen timeline is the one
+    [// English-only beta. Kept generous on purpose: the screen timeline is the one
      // answer NIC is always right about, and a phrasing we fail to recognise gets
      // handed to a 1.5B model instead — which is the worst possible trade. Every
      // natural way of asking "what have I been up to" must land here.
@@ -2237,32 +2230,25 @@ pub(crate) fn is_activity_recall(query: &str) -> bool {
     ].iter().any(|&t| q.contains(t))
 }
 
-/// "Кто я / как меня зовут" — a question about the USER's own name, answered
-/// deterministically from the profile. Kept narrow so it never swallows "кто
-/// такой <famous person>" (a general-knowledge question for the model).
+/// "Who am I / what's my name" — a question about the USER's own name, answered
+/// deterministically from the profile. Kept narrow so it never swallows "who is
+/// <famous person>" (a general-knowledge question for the model).
 pub(crate) fn asks_user_name(query: &str) -> bool {
     let q = query.to_lowercase();
     let bare: String = q.chars().filter(|c| c.is_alphanumeric() || *c == ' ').collect();
     if matches!(bare.trim(),
-        "кто я" | "а кто я" | "кто я такой" | "кто я такая"
-        | "ты знаешь кто я" | "ты знаешь как меня зовут"
-        | "who am i" | "do you know who i am" | "do you know my name") { return true; }
-    ["как меня зов", "как меня зват", "как моё имя", "как мое имя",
-     "знаешь моё имя", "знаешь мое имя",
-     "what is my name", "what's my name", "whats my name", "tell me my name"]
+        "who am i" | "do you know who i am" | "do you know my name") { return true; }
+    ["what is my name", "what's my name", "whats my name", "tell me my name"]
         .iter().any(|t| q.contains(t))
 }
 
-/// "Кто ты / как тебя зовут" — a question about NIC's own identity, answered
+/// "Who are you / what is your name" — a question about NIC's own identity, answered
 /// with a fixed line so the small model can't drift on it.
 pub(crate) fn asks_assistant_identity(query: &str) -> bool {
     let q = query.to_lowercase();
     let bare: String = q.chars().filter(|c| c.is_alphanumeric() || *c == ' ').collect();
-    if matches!(bare.trim(),
-        "кто ты" | "ты кто" | "а кто ты" | "кто ты такой"
-        | "who are you" | "what are you" | "who r u") { return true; }
-    ["как тебя зов", "как тебя зват", "твоё имя", "твое имя", "как звать тебя",
-     "what is your name", "what's your name", "whats your name", "tell me your name"]
+    if matches!(bare.trim(), "who are you" | "what are you" | "who r u") { return true; }
+    ["what is your name", "what's your name", "whats your name", "tell me your name"]
         .iter().any(|t| q.contains(t))
 }
 
@@ -2272,25 +2258,25 @@ fn is_screen_query(query: &str) -> bool {
 
     // Unambiguous screen / window phrasing → always look at the screen.
     let strong = [
-        "экран", "на экране", "что открыто", "что вижу", "мой экран",
-        "какое окно", "что за окно", "вкладка", "что было открыто",
-        "открытый сайт", "что я слушаю", "что слушал", "какие приложения",
+        "on my screen", "on screen", "my screen", "this window", "the window",
+        "current window", "in front of me", "what am i looking at",
+        "what's open", "whats open", "what is open", "which window",
     ];
     if strong.iter().any(|&t| q.contains(t)) { return true; }
 
-    // Ambiguous media / browser words ("сайт", "видео", "браузер", "смотрю")
-    // appear in plenty of GENERAL questions ("какой сайт самый быстрый",
-    // "что за видео"). Treat them as a screen query ONLY when the user refers to
-    // themselves ("что Я смотрю") or asks about open-state ("какой браузер
-    // открыт"). Without that, it's a general question — don't inject the screen
-    // timeline, or the small model just parrots the latest screen line.
-    let activity_word = ["ютуб", "youtube", "смотрел", "смотрю", "смотришь",
-                         "видео", "браузер", "сайт"];
+    // Ambiguous media / browser words ("video", "browser", "site") appear in plenty
+    // of GENERAL questions too ("which browser is fastest"). Treat them as a screen
+    // query ONLY when the user refers to themselves ("what video am I watching") or
+    // asks about open-state ("which browser is open"). Without that it's a general
+    // question, and injecting the timeline just makes the small model parrot the
+    // latest screen line.
+    let activity_word = ["youtube", "video", "browser", "site", "tab", "watching",
+                         "reading", "playing"];
     if !activity_word.iter().any(|&t| q.contains(t)) { return false; }
 
     let self_ref = q.split(|c: char| !c.is_alphanumeric())
-        .any(|w| matches!(w, "я" | "мне" | "мой" | "моя" | "моё" | "мои" | "мою" | "меня" | "мной"));
-    let open_cue = ["открыт", "открыта", "открыто", "открыты"].iter().any(|&t| q.contains(t));
+        .any(|w| matches!(w, "i" | "i'm" | "im" | "me" | "my" | "mine"));
+    let open_cue = ["open", "opened", "running"].iter().any(|&t| q.contains(t));
     self_ref || open_cue
 }
 
@@ -2316,9 +2302,9 @@ fn auto_tag(text: &str, app_name: &str, window_title: &str) -> Vec<String> {
         tags.push("#code".to_string());
     }
 
-    let work_text = ["excel", "word", "outlook", "teams", "meeting", "совещани",
-                     "задача", "проект", "дедлайн", "отчёт", "отчет", "invoice",
-                     "договор", "контракт", "клиент", "заказчик", "jira", "trello",
+    let work_text = ["excel", "word", "outlook", "teams", "meeting", "deadline",
+                     "invoice", "task", "sprint", "standup",
+                     "jira", "trello",
                      "confluence", "notion", "slack", "zoom", "google meet"];
     let work_app  = ["excel", "word", "outlook", "teams", "notion", "jira",
                      "confluence", "trello", "asana", "linear"];
@@ -2328,18 +2314,16 @@ fn auto_tag(text: &str, app_name: &str, window_title: &str) -> Vec<String> {
         tags.push("#work".to_string());
     }
 
-    let finance_kw = ["банк", "платёж", "платеж", "счёт", "счет", "рубл", "долл",
-                      "евро", "криптo", "биткоин", "бюджет", "расход", "доход",
-                      "зарплат", "налог", "invoice", "оплат", "перевод", "card",
-                      "wallet", "trading", "binance", "tinkoff", "sber"];
+    let finance_kw = ["bank", "payment", "invoice", "salary", "tax", "card",
+                      "wallet", "trading", "binance", "paypal", "stripe"];
     if finance_kw.iter().any(|k| t.contains(k) || a.contains(k) || w.contains(k)) {
         tags.push("#finance".to_string());
     }
 
-    let entertain_kw = ["youtube", "twitch", "netflix", "кинопоиск", "spotify",
-                        "steam", "игр", "game", "movie", "фильм", "сериал",
-                        "музык", "music", "podcast", "подкаст", "тикток", "tiktok",
-                        "instagram", "vk.com", "vkvideo", "dzen"];
+    let entertain_kw = ["youtube", "twitch", "netflix", "spotify",
+                        "steam", "game", "movie", "series",
+                        "music", "podcast", "tiktok",
+                        "instagram", "vk.com", "vkvideo"];
     if entertain_kw.iter().any(|k| t.contains(k) || a.contains(k) || w.contains(k)) {
         tags.push("#entertainment".to_string());
     }
@@ -2560,13 +2544,13 @@ mod tests {
     }
 
     #[test]
-    fn autotag_work_deadline_cyrillic() {
-        assert!(auto_tag("дедлайн завтра в 18:00", "chrome", "x").contains(&"#work".into()));
+    fn autotag_work_deadline() {
+        assert!(auto_tag("deadline tomorrow at 18:00", "chrome", "x").contains(&"#work".into()));
     }
 
     #[test]
-    fn autotag_work_zadacha_cyrillic() {
-        assert!(auto_tag("задача по проекту", "chrome", "x").contains(&"#work".into()));
+    fn autotag_work_task() {
+        assert!(auto_tag("task for the project", "chrome", "x").contains(&"#work".into()));
     }
 
     #[test]
@@ -2594,27 +2578,27 @@ mod tests {
 
     #[test]
     fn autotag_finance_bank_keyword() {
-        assert!(auto_tag("перевод в банк сбербанк", "chrome", "x").contains(&"#finance".into()));
+        assert!(auto_tag("transfer to the bank", "chrome", "x").contains(&"#finance".into()));
     }
 
     #[test]
-    fn autotag_finance_tinkoff_app() {
-        assert!(auto_tag("баланс", "tinkoff", "счёт").contains(&"#finance".into()));
+    fn autotag_finance_wallet_app() {
+        assert!(auto_tag("balance", "wallet", "account").contains(&"#finance".into()));
     }
 
     #[test]
     fn autotag_finance_binance() {
-        assert!(auto_tag("торги на binance сегодня", "chrome", "x").contains(&"#finance".into()));
+        assert!(auto_tag("binance trading today", "chrome", "x").contains(&"#finance".into()));
     }
 
     #[test]
-    fn autotag_finance_rubl_keyword() {
-        assert!(auto_tag("стоимость 500 рублей", "chrome", "x").contains(&"#finance".into()));
+    fn autotag_finance_salary_keyword() {
+        assert!(auto_tag("salary for June", "chrome", "x").contains(&"#finance".into()));
     }
 
     #[test]
-    fn autotag_finance_nalog_keyword() {
-        assert!(auto_tag("налоговая декларация", "chrome", "x").contains(&"#finance".into()));
+    fn autotag_finance_tax_keyword() {
+        assert!(auto_tag("tax return", "chrome", "x").contains(&"#finance".into()));
     }
 
     #[test]
@@ -2660,8 +2644,8 @@ mod tests {
     }
 
     #[test]
-    fn autotag_entertainment_serial_cyrillic() {
-        assert!(auto_tag("смотрю сериал", "chrome", "x").contains(&"#entertainment".into()));
+    fn autotag_entertainment_series() {
+        assert!(auto_tag("watching a series", "chrome", "x").contains(&"#entertainment".into()));
     }
 
     #[test]
@@ -2673,7 +2657,7 @@ mod tests {
 
     #[test]
     fn autotag_plain_text_no_tags() {
-        let tags = auto_tag("обычный текст ничего особенного", "chrome", "Google Search");
+        let tags = auto_tag("ordinary text nothing special", "chrome", "Google Search");
         assert!(tags.is_empty(), "plain search query should produce no tags");
     }
 
@@ -2693,7 +2677,7 @@ mod tests {
     #[test]
     fn autotag_tag_order_stable() {
         // tags are pushed in order: code → work → finance → entertainment
-        let tags = auto_tag("fn foo() {} задача оплатить youtube", "code", "x");
+        let tags = auto_tag("fn foo() {} task payment youtube", "code", "x");
         if tags.len() >= 2 {
             let code_pos   = tags.iter().position(|t| t == "#code");
             let work_pos   = tags.iter().position(|t| t == "#work");
@@ -2729,7 +2713,7 @@ mod tests {
     #[test]
     fn embed_key_deterministic_across_calls_many() {
         for i in 0..50 {
-            let s = format!("тестовый запрос номер {}", i);
+            let s = format!("test query number {}", i);
             assert_eq!(embed_cache_key(&s), embed_cache_key(&s));
         }
     }
@@ -3021,7 +3005,7 @@ mod tests {
 
     #[test]
     fn extract_text_invalid_json_returns_raw() {
-        let raw = "не JSON вообще";
+        let raw = "not json at all";
         assert_eq!(extract_text_from_json(raw), raw);
     }
 
@@ -3040,8 +3024,8 @@ mod tests {
 
     #[test]
     fn extract_text_unicode_content() {
-        let json = r#"{"text":"Привет мир 🌍"}"#;
-        assert_eq!(extract_text_from_json(json), "Привет мир 🌍");
+        let json = r#"{"text":"Hello world 🌍"}"#;
+        assert_eq!(extract_text_from_json(json), "Hello world 🌍");
     }
 
     #[test]
@@ -3085,7 +3069,7 @@ mod tests {
 
     #[test]
     fn app_name_dialogue_extracted() {
-        let json = r#"{"app_name":"dialogue","text":"Вопрос: Q\nОтвет: A"}"#;
+        let json = r#"{"app_name":"dialogue","text":"Q: Q\nA: A"}"#;
         assert_eq!(extract_app_name_from_json(json), "dialogue");
     }
 
@@ -3120,8 +3104,8 @@ mod tests {
 
     #[test]
     fn embed_key_cyrillic_stable() {
-        let k1 = embed_cache_key("Привет мир");
-        let k2 = embed_cache_key("Привет мир");
+        let k1 = embed_cache_key("Hello world");
+        let k2 = embed_cache_key("Hello world");
         assert_eq!(k1, k2);
     }
 
@@ -3143,28 +3127,28 @@ mod tests {
     // ── is_screen_query ───────────────────────────────────────────────────────
 
     #[test]
-    fn screen_query_ekran_true() {
-        assert!(is_screen_query("что на экране?"));
+    fn screen_query_screen_true() {
+        assert!(is_screen_query("what is on my screen?"));
     }
 
     #[test]
-    fn screen_query_okno_true() {
-        assert!(is_screen_query("какое окно открыто"));
+    fn screen_query_window_true() {
+        assert!(is_screen_query("which window is open"));
     }
 
     #[test]
     fn screen_query_youtube_true() {
-        assert!(is_screen_query("что я смотрел на youtube"));
+        assert!(is_screen_query("what was I watching on youtube"));
     }
 
     #[test]
     fn screen_query_browser_true() {
-        assert!(is_screen_query("какой браузер открыт"));
+        assert!(is_screen_query("which browser is open"));
     }
 
     #[test]
     fn screen_query_ordinary_question_false() {
-        assert!(!is_screen_query("какая погода в Москве?"));
+        assert!(!is_screen_query("what is the weather in London?"));
     }
 
     #[test]
@@ -3174,35 +3158,33 @@ mod tests {
 
     #[test]
     fn screen_query_case_insensitive_upper() {
-        // "ЭКРАН" should match because is_screen_query lowercases input
-        assert!(is_screen_query("ЭКРАН"));
+        assert!(is_screen_query("MY SCREEN"));
     }
 
     #[test]
     fn screen_query_video_needs_self_or_open() {
-        // "что за видео" alone is ambiguous/general now (a former false-positive
-        // source); it only counts as a screen query with a self-reference.
-        assert!(!is_screen_query("что за видео"));
-        assert!(is_screen_query("что за видео я смотрю"));
+        // A bare "what video" is ambiguous — it only counts as a screen query when
+        // the user refers to themselves.
+        assert!(!is_screen_query("what video"));
+        assert!(is_screen_query("what video am i watching"));
     }
 
     #[test]
     fn screen_query_general_questions_false() {
         // Regression for the "every answer is the same screen line" bug: these are
         // GENERAL questions and must NOT pull in the screen timeline.
-        assert!(!is_screen_query("какой сайт самый быстрый"));
-        assert!(!is_screen_query("какой браузер самый быстрый"));
-        assert!(!is_screen_query("какое видео посоветуешь"));
+        assert!(!is_screen_query("which site is the fastest"));
+        assert!(!is_screen_query("what video would you recommend"));
     }
 
     #[test]
-    fn screen_query_chto_otkryto_true() {
-        assert!(is_screen_query("что открыто на экране"));
+    fn screen_query_whats_open_true() {
+        assert!(is_screen_query("what's open on my screen"));
     }
 
     #[test]
-    fn screen_query_smotrel_true() {
-        assert!(is_screen_query("что я смотрел недавно"));
+    fn screen_query_was_watching_true() {
+        assert!(is_screen_query("what was I watching recently"));
     }
 
     // ── summarize_code ────────────────────────────────────────────────────────
@@ -3269,13 +3251,13 @@ mod tests {
 
     #[test]
     fn auto_tag_work_by_keyword() {
-        let tags = auto_tag("дедлайн проекта через неделю", "chrome", "outlook");
+        let tags = auto_tag("project deadline in a week", "chrome", "outlook");
         assert!(tags.contains(&"#work".to_string()));
     }
 
     #[test]
     fn auto_tag_finance_by_keyword() {
-        let tags = auto_tag("перевод на счёт в банке", "chrome", "банк");
+        let tags = auto_tag("transfer to my bank account", "chrome", "bank");
         assert!(tags.contains(&"#finance".to_string()));
     }
 
@@ -3287,13 +3269,15 @@ mod tests {
 
     #[test]
     fn auto_tag_no_match_empty_tags() {
-        let tags = auto_tag("обычный текст без ключевых слов", "notepad", "untitled");
-        assert!(tags.is_empty());
+        // Substring matching means "keywords" would trip the "word" work-tag —
+        // pick a phrase that contains none of the tag stems.
+        let tags = auto_tag("just some plain notes here", "notepad", "untitled");
+        assert!(tags.is_empty(), "unexpected tags: {:?}", tags);
     }
 
     #[test]
     fn auto_tag_multiple_categories() {
-        let tags = auto_tag("invoice fn main() {} банк", "code", "работа");
+        let tags = auto_tag("invoice fn main() {} bank", "code", "work");
         assert!(tags.contains(&"#code".to_string()));
         assert!(tags.contains(&"#work".to_string()) || tags.contains(&"#finance".to_string()));
     }
@@ -3458,21 +3442,21 @@ mod tests {
 
     #[test]
     fn strip_leading_count_removes_browser_counter() {
-        assert_eq!(strip_leading_count("(20) Реальный заголовок"), "Реальный заголовок");
-        assert_eq!(strip_leading_count("(1) Видео"), "Видео");
+        assert_eq!(strip_leading_count("(20) A real title"), "A real title");
+        assert_eq!(strip_leading_count("(1) Video"), "Video");
     }
 
     #[test]
     fn strip_leading_count_keeps_real_parens() {
         // A non-numeric or content-bearing parenthesis must not be stripped.
         assert_eq!(strip_leading_count("(beta) NIC"), "(beta) NIC");
-        assert_eq!(strip_leading_count("обычный заголовок"), "обычный заголовок");
+        assert_eq!(strip_leading_count("a plain title"), "a plain title");
     }
 
     #[test]
     fn activity_line_youtube_strips_count_and_brand() {
-        let line = activity_line("firefox", "(20) Обзор iOS 27 - YouTube — Mozilla Firefox");
-        assert_eq!(line, "watched «Обзор iOS 27» on YouTube");
+        let line = activity_line("firefox", "(20) iOS 27 review - YouTube — Mozilla Firefox");
+        assert_eq!(line, "watched «iOS 27 review» on YouTube");
     }
 
     #[test]
@@ -3482,9 +3466,9 @@ mod tests {
 
     #[test]
     fn activity_category_buckets() {
-        assert_eq!(activity_category("firefox", "что-то - YouTube"), "watched videos");
+        assert_eq!(activity_category("firefox", "something - YouTube"), "watched videos");
         assert_eq!(activity_category("Code", "main.rs"), "worked on code");
-        assert_eq!(activity_category("explorer", "Загрузки"), "worked in apps");
+        assert_eq!(activity_category("explorer", "Downloads"), "worked in apps");
     }
 
     #[test]
@@ -3499,20 +3483,20 @@ mod tests {
 
     #[test]
     fn asks_user_name_matches_self_identity() {
-        assert!(asks_user_name("как меня зовут"));
-        assert!(asks_user_name("кто я?"));
-        assert!(asks_user_name("кто я такой"));
+        assert!(asks_user_name("what is my name"));
+        assert!(asks_user_name("who am i?"));
+        assert!(asks_user_name("do you know my name"));
         // Must NOT swallow a general-knowledge question about a person.
-        assert!(!asks_user_name("кто такой дарио амодеи"));
-        assert!(!asks_user_name("кто такой эйнштейн"));
+        assert!(!asks_user_name("who is dario amodei"));
+        assert!(!asks_user_name("who is einstein"));
     }
 
     #[test]
     fn asks_assistant_identity_matches_nic() {
-        assert!(asks_assistant_identity("кто ты"));
-        assert!(asks_assistant_identity("как тебя зовут"));
-        // A "what's your X" should not be hijacked unless it's the bare identity.
-        assert!(!asks_assistant_identity("кто такой дарио"));
-        assert!(!asks_assistant_identity("кто я"));
+        assert!(asks_assistant_identity("who are you"));
+        assert!(asks_assistant_identity("what is your name"));
+        // A question about somebody else must not be hijacked by the identity gate.
+        assert!(!asks_assistant_identity("who is dario"));
+        assert!(!asks_assistant_identity("who am i"));
     }
 }

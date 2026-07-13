@@ -30,54 +30,54 @@ fn detect_city_impl() -> Option<String> {
 fn timezone_to_city(tz: &str) -> Option<&'static str> {
     match tz {
         // CIS
-        "Russian Standard Time"          => Some("Москва"),
-        "Russian Time Zone 1"            => Some("Самара"),
-        "Ekaterinburg Standard Time"     => Some("Екатеринбург"),
-        "N. Central Asia Standard Time"  => Some("Омск"),
-        "Central Asia Standard Time"     => Some("Алматы"),
-        "Kazakhstan Standard Time"       => Some("Астана"),
-        "North Asia Standard Time"       => Some("Красноярск"),
-        "North Asia East Standard Time"  => Some("Иркутск"),
-        "Transbaikal Standard Time"      => Some("Чита"),
-        "Yakutsk Standard Time"          => Some("Якутск"),
-        "Vladivostok Standard Time"      => Some("Владивосток"),
-        "Russia Time Zone 10"            => Some("Магадан"),
-        "Russia Time Zone 11"            => Some("Петропавловск-Камчатский"),
-        "FLE Standard Time"              => Some("Киев"),
-        "Ukraine Standard Time"          => Some("Киев"),
-        "Belarus Standard Time"          => Some("Минск"),
-        "Azerbaijan Standard Time"       => Some("Баку"),
-        "Georgian Standard Time"         => Some("Тбилиси"),
-        "Armenian Standard Time"         => Some("Ереван"),
-        "Uzbekistan Standard Time"       => Some("Ташкент"),
-        "Kyrgyzstan Standard Time"       => Some("Бишкек"),
-        "Tajikistan Standard Time"       => Some("Душанбе"),
-        "Turkmenistan Standard Time"     => Some("Ашхабад"),
+        "Russian Standard Time"          => Some("Moscow"),
+        "Russian Time Zone 1"            => Some("Samara"),
+        "Ekaterinburg Standard Time"     => Some("Yekaterinburg"),
+        "N. Central Asia Standard Time"  => Some("Omsk"),
+        "Central Asia Standard Time"     => Some("Almaty"),
+        "Kazakhstan Standard Time"       => Some("Astana"),
+        "North Asia Standard Time"       => Some("Krasnoyarsk"),
+        "North Asia East Standard Time"  => Some("Irkutsk"),
+        "Transbaikal Standard Time"      => Some("Chita"),
+        "Yakutsk Standard Time"          => Some("Yakutsk"),
+        "Vladivostok Standard Time"      => Some("Vladivostok"),
+        "Russia Time Zone 10"            => Some("Magadan"),
+        "Russia Time Zone 11"            => Some("Petropavlovsk-Kamchatsky"),
+        "FLE Standard Time"              => Some("Kyiv"),
+        "Ukraine Standard Time"          => Some("Kyiv"),
+        "Belarus Standard Time"          => Some("Minsk"),
+        "Azerbaijan Standard Time"       => Some("Baku"),
+        "Georgian Standard Time"         => Some("Tbilisi"),
+        "Armenian Standard Time"         => Some("Yerevan"),
+        "Uzbekistan Standard Time"       => Some("Tashkent"),
+        "Kyrgyzstan Standard Time"       => Some("Bishkek"),
+        "Tajikistan Standard Time"       => Some("Dushanbe"),
+        "Turkmenistan Standard Time"     => Some("Ashgabat"),
         // Europe
-        "GMT Standard Time"              => Some("Лондон"),
-        "W. Europe Standard Time"        => Some("Берлин"),
-        "Central European Standard Time" => Some("Варшава"),
-        "Central Europe Standard Time"   => Some("Прага"),
-        "Romance Standard Time"          => Some("Париж"),
-        "Turkey Standard Time"           => Some("Стамбул"),
-        "Israel Standard Time"           => Some("Тель-Авив"),
+        "GMT Standard Time"              => Some("London"),
+        "W. Europe Standard Time"        => Some("Berlin"),
+        "Central European Standard Time" => Some("Warsaw"),
+        "Central Europe Standard Time"   => Some("Prague"),
+        "Romance Standard Time"          => Some("Paris"),
+        "Turkey Standard Time"           => Some("Istanbul"),
+        "Israel Standard Time"           => Some("Tel Aviv"),
         // Asia
-        "Arabian Standard Time"          => Some("Дубай"),
-        "Arab Standard Time"             => Some("Эр-Рияд"),
-        "India Standard Time"            => Some("Дели"),
-        "China Standard Time"            => Some("Пекин"),
-        "Tokyo Standard Time"            => Some("Токио"),
-        "Korea Standard Time"            => Some("Сеул"),
-        "Singapore Standard Time"        => Some("Сингапур"),
+        "Arabian Standard Time"          => Some("Dubai"),
+        "Arab Standard Time"             => Some("Riyadh"),
+        "India Standard Time"            => Some("Delhi"),
+        "China Standard Time"            => Some("Beijing"),
+        "Tokyo Standard Time"            => Some("Tokyo"),
+        "Korea Standard Time"            => Some("Seoul"),
+        "Singapore Standard Time"        => Some("Singapore"),
         // Americas
-        "Eastern Standard Time"          => Some("Нью-Йорк"),
-        "Central Standard Time"          => Some("Чикаго"),
-        "Mountain Standard Time"         => Some("Денвер"),
-        "Pacific Standard Time"          => Some("Лос-Анджелес"),
-        "E. South America Standard Time" => Some("Сан-Паулу"),
+        "Eastern Standard Time"          => Some("New York"),
+        "Central Standard Time"          => Some("Chicago"),
+        "Mountain Standard Time"         => Some("Denver"),
+        "Pacific Standard Time"          => Some("Los Angeles"),
+        "E. South America Standard Time" => Some("Sao Paulo"),
         // Africa
-        "E. Africa Standard Time"        => Some("Найроби"),
-        "South Africa Standard Time"     => Some("Йоханнесбург"),
+        "E. Africa Standard Time"        => Some("Nairobi"),
+        "South Africa Standard Time"     => Some("Johannesburg"),
         _                                => None,
     }
 }
@@ -168,22 +168,22 @@ mod tests {
 
     #[test]
     fn timezone_kazakhstan_maps_to_astana() {
-        assert_eq!(timezone_to_city("Kazakhstan Standard Time"), Some("Астана"));
+        assert_eq!(timezone_to_city("Kazakhstan Standard Time"), Some("Astana"));
     }
 
     #[test]
     fn timezone_russian_standard_maps_to_moscow() {
-        assert_eq!(timezone_to_city("Russian Standard Time"), Some("Москва"));
+        assert_eq!(timezone_to_city("Russian Standard Time"), Some("Moscow"));
     }
 
     #[test]
     fn timezone_tokyo_maps() {
-        assert_eq!(timezone_to_city("Tokyo Standard Time"), Some("Токио"));
+        assert_eq!(timezone_to_city("Tokyo Standard Time"), Some("Tokyo"));
     }
 
     #[test]
     fn timezone_eastern_maps_to_new_york() {
-        assert_eq!(timezone_to_city("Eastern Standard Time"), Some("Нью-Йорк"));
+        assert_eq!(timezone_to_city("Eastern Standard Time"), Some("New York"));
     }
 
     #[test]

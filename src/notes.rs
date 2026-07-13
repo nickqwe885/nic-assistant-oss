@@ -63,7 +63,7 @@ mod tests {
     fn sanitize_strips_separators_and_traversal() {
         assert_eq!(sanitize_stem("../../etc/passwd"), "etc passwd");
         assert_eq!(sanitize_stem("a/b\\c:d*e"), "a b c d e");
-        assert_eq!(sanitize_stem("  идея про физику  "), "идея про физику");
+        assert_eq!(sanitize_stem("  a physics idea  "), "a physics idea");
     }
 
     #[test]

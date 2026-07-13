@@ -209,10 +209,6 @@ fn is_smalltalk(query: &str) -> bool {
         "whats up", "what's up", "thanks", "thank you", "thx", "ty", "cheers",
         "good morning", "good evening", "good night", "gm", "gn",
         "lol", "haha", "hahaha", "ok", "okay", "cool", "nice", "bye", "goodbye",
-        "привет", "приветик", "хай", "здарова", "здорова", "дарова", "ку",
-        "как дела", "как ты", "как оно", "чо как", "что как",
-        "спасибо", "спс", "благодарю", "пока", "доброе утро", "добрый вечер",
-        "спокойной ночи", "лол", "хаха", "ок", "окей", "норм", "класс", "пон",
     ];
     EXACT.contains(&q)
 }
@@ -330,7 +326,7 @@ mod tests {
         use super::grounded_temp;
         // Greeting must stay warm despite a retriever-attached screen section.
         assert_eq!(grounded_temp("Screen history:\nfoo", "hey"), 0.3);
-        assert_eq!(grounded_temp("Screen history:\nfoo", "как дела"), 0.3);
+        assert_eq!(grounded_temp("Screen history:\nfoo", "how are you"), 0.3);
         // But a real factual query with the same context stays greedy.
         assert_eq!(grounded_temp("Screen history:\nfoo", "what did i do"), 0.0);
     }

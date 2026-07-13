@@ -6,14 +6,14 @@
 //! `webview.evaluate_script` is meant to pass through [`sanitize_to_html`] first,
 //! so a `<`, `"` or `'` in captured text can never become live markup.
 //!
-//! Staging note (MASTER_PLAN §8б — beta ships the staged transport): today the
+//! Staging note (MASTER_PLAN §8b — beta ships the staged transport): today the
 //! model/OCR text still reaches the UI over the HTTP+token API as JSON, not via
 //! `evaluate_script`, so the *active* escape chokepoint for the beta is the
 //! single `renderMarkdown`/`esc` pass in ui.html (extended to cover `"`/`'`,
 //! which closes the ui.html:846 link-regex XSS). This gate is the canonical
 //! escape used the moment OCR/answer text moves onto the native IPC path; at
 //! that point ui.html's escape is removed so escaping stays in exactly one place
-//! (§8а double-escape rule). It is kept here — defined and tested — so the IPC
+//! (§8a double-escape rule). It is kept here — defined and tested — so the IPC
 //! sub-step only has to wire it in.
 
 /// Escapes the five HTML-significant characters so `text` is safe to interpolate

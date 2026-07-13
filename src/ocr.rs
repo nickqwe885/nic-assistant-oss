@@ -198,9 +198,9 @@ mod tests {
 
     #[test]
     fn clean_ocr_cyrillic_text_preserved() {
-        let input = "  Привет мир  \n  как дела  ";
+        let input = "  Hello world  \n  how are you  ";
         let result = clean_ocr_text(input);
-        assert_eq!(result, "Привет мир\nкак дела");
+        assert_eq!(result, "Hello world\nhow are you");
     }
 
     #[test]

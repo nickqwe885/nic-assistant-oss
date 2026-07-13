@@ -302,11 +302,11 @@ impl Default for SecurityConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct AdaptiveConfig {
-    /// Время генерации ежедневного саммари, формат "HH:MM".
+    /// Time of day the daily summary is generated, "HH:MM".
     pub summary_time:    String,
-    /// Если true — Sentinel не пишет OCR (режим инкогнито).
+    /// When true, Sentinel writes no OCR (incognito mode).
     pub incognito_mode:  bool,
-    /// Порог CPU (%) выше которого Thinker уходит в спячку.
+    /// CPU threshold (%) above which Thinker hibernates.
     pub cpu_limit_pct:   f32,
     /// Language for LLM responses, e.g. "Russian", "English".
     /// Empty string = auto-detect from OS locale at startup.
@@ -337,13 +337,13 @@ impl Default for AdaptiveConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
 pub struct ProfileConfig {
-    /// Display name, e.g. "Иван"
+    /// Display name, e.g. "Alex"
     pub name:        String,
     /// Professional role, e.g. "Senior Rust developer"
     pub role:        String,
     /// Active projects, e.g. ["NIC-Assistant", "billing-service"]
     pub projects:    Vec<String>,
-    /// Free-form style preferences, e.g. "Предпочитаю краткие технические ответы на русском"
+    /// Free-form style preferences, e.g. "I prefer short, technical answers"
     pub preferences: String,
 }
 
@@ -545,13 +545,13 @@ mod tests {
     #[test]
     fn profile_fields_set_and_clone() {
         let p = ProfileConfig {
-            name:        "Иван".to_string(),
+            name:        "Alex".to_string(),
             role:        "Rust dev".to_string(),
             projects:    vec!["NIS".to_string()],
-            preferences: "краткие ответы".to_string(),
+            preferences: "short answers".to_string(),
         };
         let q = p.clone();
-        assert_eq!(q.name, "Иван");
+        assert_eq!(q.name, "Alex");
         assert_eq!(q.projects, vec!["NIS"]);
     }
 
@@ -573,15 +573,15 @@ server_port = 9000
     fn toml_profile_roundtrip() {
         let toml = r#"
 [profile]
-name        = "Алексей"
+name        = "Alex"
 role        = "Backend engineer"
 projects    = ["billing", "nic-assistant"]
-preferences = "короткие ответы"
+preferences = "short answers"
 "#;
         let cfg: AppConfig = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.profile.name, "Алексей");
+        assert_eq!(cfg.profile.name, "Alex");
         assert_eq!(cfg.profile.projects.len(), 2);
-        assert_eq!(cfg.profile.preferences, "короткие ответы");
+        assert_eq!(cfg.profile.preferences, "short answers");
     }
 
     #[test]

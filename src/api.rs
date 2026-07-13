@@ -81,7 +81,7 @@ enum EntityUpdate { Fact(String), Rename(String) }
 fn entity_statement(query: &str) -> Option<EntityUpdate> {
     let q = query.trim().trim_end_matches(['.', '!']);
     let ql_full = q.to_lowercase();
-    // Corrective lead: "no", but people stretch it — "nooo", "nope", "неее".
+    // Corrective lead: "no", but people stretch it — "nooo", "nope".
     // Matching only the exact "no " missed «nooo I am about cs 2 player», and the
     // model answered with nonsense about two people playing Counter-Strike.
     let ql = {
@@ -91,7 +91,7 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
             .chars().filter(|c| c.is_alphanumeric()).collect();
         let is_negation = !first.is_empty()
             && ((first.starts_with("no") && first.chars().all(|c| matches!(c, 'n' | 'o' | 'p' | 'e')))
-                || first.starts_with("не"));
+                );
         if is_negation {
             ql_full[first_end..].trim_start_matches([' ', ',']).trim()
         } else {
@@ -107,7 +107,7 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
 
     // A rename must come first: "his nickname is X" also contains " is ".
     for pat in ["his nickname is ", "her nickname is ", "his name is ", "her name is ",
-                "his nick is ", "her nick is ", "его ник ", "её ник ", "ее ник "] {
+                "his nick is ", "her nick is "] {
         if ql.starts_with(pat) || ql.contains(pat) {
             if let Some(v) = rest_of(pat) {
                 return Some(EntityUpdate::Rename(v));
@@ -118,8 +118,7 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
     // Live, "no I am about japanese street racer and founder of top secret customs"
     // was treated as a question and the model invented a founder named Kenjiro Kawai.
     for pat in ["i mean ", "i meant ", "i'm talking about ", "im talking about ",
-                "i am talking about ", "i am about ", "i'm about ",
-                "я про ", "я имею в виду ", "имею в виду "] {
+                "i am talking about ", "i am about ", "i'm about "] {
         if ql.starts_with(pat) {
             let v = rest_of(pat)?;
             let v = v.trim_start_matches("the ").trim_start_matches("a ").trim();
@@ -127,8 +126,7 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
         }
     }
     // A plain descriptor: "he is a dota 2 player", "she is a singer".
-    for pat in ["he is ", "she is ", "they are ", "he's ", "she's ",
-                "он ", "она "] {
+    for pat in ["he is ", "she is ", "they are ", "he's ", "she's "] {
         if ql.starts_with(pat) {
             let v = rest_of(pat)?;
             let v = v.trim_start_matches("a ").trim_start_matches("an ").trim();
@@ -705,8 +703,6 @@ fn asks_about_secrets(query: &str) -> bool {
         "private key", "private keys", "api key", "api keys", "secret key",
         "password", "passwords", "card number", "card numbers", "credit card",
         "bank card", "cvv", "wallet",
-        "сид фраз", "сид-фраз", "мнемоник", "приватный ключ", "приватные ключи",
-        "пароль", "пароли", "номер карты", "карту", "кошел",
     ];
     if !SECRET_WORDS.iter().any(|w| q.contains(w)) {
         return false;
@@ -714,10 +710,9 @@ fn asks_about_secrets(query: &str) -> bool {
     // Only when it's about what NIC has seen/stored — not "how do I make a strong
     // password", which is a legitimate question the model should answer.
     const ABOUT_NIC: &[&str] = &[
-        "my ", "мой", "моя", "мои", "you saw", "you have", "you see", "you seen",
+        "my ", "you saw", "you have", "you see", "you seen",
         "you know", "your memory", "in memory", "stored", "did you", "do you",
-        "have you", "show me", "list any", "what passwords", "ты видел", "ты знаешь",
-        "у тебя", "в памяти", "покажи",
+        "have you", "show me", "list any", "what passwords",
     ];
     ABOUT_NIC.iter().any(|w| q.contains(w))
 }
@@ -766,7 +761,6 @@ fn strip_openers(q: &str) -> &str {
     const OPENERS: &[&str] = &[
         "hi ", "hey ", "hello ", "yo ", "ok ", "okay ", "so ", "and ", "btw ",
         "hi, ", "hey, ", "hello, ", "ok, ", "okay, ", "so, ", "btw, ",
-        "привет ", "привет, ", "слушай ", "слушай, ", "а ", "и ",
     ];
     let mut s = q.trim();
     // One opener is enough ("hi hey who is X" is not a thing).
@@ -791,7 +785,6 @@ fn person_in_question(query: &str) -> Option<String> {
     let ql = q.to_lowercase();
     const LEADS: &[&str] = &[
         "who is ", "who was ", "who's ", "who are ", "who were ",
-        "кто такой ", "кто такая ", "кто такие ",
     ];
     // Find the lead ANYWHERE, not only at the start. People wrap it in politeness:
     // "hi nic could u say me who is kyosuke" slipped through and the model invented
@@ -811,7 +804,7 @@ fn person_in_question(query: &str) -> Option<String> {
     // A determiner means it's a descriptive question ("who is the best programmer"),
     // not a named person.
     if matches!(first, "the" | "a" | "an" | "my" | "your" | "his" | "her" | "their"
-                     | "this" | "that" | "твой" | "мой" | "этот") {
+                     | "this" | "that") {
         return None;
     }
     // Everything else after "who is" is a name. Requiring a CAPITAL letter here was
@@ -974,15 +967,15 @@ async fn resolve_media_action(query: &str, librarian: &crate::librarian::Librari
     let q = orig.to_lowercase();
 
     if matches!(q.as_str(),
-        "continue" | "продолжи" | "продолжить" | "continue watching" | "continue where i left off") {
+        "continue" | "continue watching" | "continue where i left off") {
         let svc = librarian.most_recent_service().await?;
         crate::modules::pilot::open_url(svc.home);
         return Some(format!("Reopening {} — where you left off.", svc.label));
     }
 
     let (term, want) = {
-        let audio: &[&str] = &["play ", "put on ", "поставь "];
-        let video: &[&str] = &["watch ", "посмотреть "];
+        let audio: &[&str] = &["play ", "put on "];
+        let video: &[&str] = &["watch "];
         let hit = audio.iter().find_map(|p| q.find(p).map(|i| (i + p.len(), Kind::Audio)))
             .or_else(|| video.iter().find_map(|p| q.find(p).map(|i| (i + p.len(), Kind::Video))))?;
         (orig.get(hit.0..)?.trim().to_string(), hit.1)
@@ -1056,7 +1049,7 @@ async fn handle_query(
         }
     }
 
-    let force_online = ["новости", "сегодня", "openai", "news", "today", "latest", "weather", "price"];
+    let force_online = ["openai", "news", "today", "latest", "weather", "price"];
     let q_low   = query.to_lowercase();
     let offline = req.offline && !force_online.iter().any(|kw| q_low.contains(*kw));
 
@@ -1224,16 +1217,15 @@ async fn handle_query_stream(
             return;
         }
 
-        // Bare web-search command with no term of its own ("прогугли", "погугли",
-        // "поищи", "google") → search the PREVIOUS question on the web. Lets the
-        // user just say "прогугли" after a question and get real results, instead
+        // Bare web-search command with no term of its own ("search", "google")
+        // → search the PREVIOUS question on the web. Lets the user just say
+        // "google" after a question and get real results, instead
         // of the model deflecting again. Runs before the cache so it always fetches.
         {
             let qt = query.trim().to_lowercase();
             let qt = qt.trim_matches(|c: char| !c.is_alphanumeric());
             const BARE_SEARCH: &[&str] = &[
-                "прогугли", "погугли", "загугли", "нагугли", "гугли", "гугл",
-                "поищи", "поиши", "найди", "search", "google",
+                "search", "google",
             ];
             if BARE_SEARCH.contains(&qt) {
                 if let Some((prev_q, _)) = last_exchange.lock().await.clone() {
@@ -1277,9 +1269,9 @@ async fn handle_query_stream(
         // ── Deterministic router ──────────────────────────────────────────────
         // Questions ABOUT THE USER or their machine are answered from CODE, never
         // the small LLM. These are simple lookups (screen log, profile) where the
-        // model adds only risk: it inconsistently drops the time, claims "нечего
-        // вспомнить" when there IS data, or confuses "кто я" with "кто такой
-        // <famous person>". Composing the answer in code makes it identical and
+        // model adds only risk: it inconsistently drops the time, claims it has
+        // "nothing to recall" when there IS data, or confuses "who am I" with
+        // "who is <famous person>". Composing the answer in code makes it identical and
         // reliable on ANY model size, and instant. Runs before the cache so it
         // always reflects current state, never a stale cached non-answer.
         // "he is a dota 2 player and streamer, find him" both teaches AND orders. If
@@ -1356,8 +1348,6 @@ async fn handle_query_stream(
             "it", "its", "that", "this", "these", "those", "they", "them", "their",
             "there", "he", "she", "his", "her", "more",
             // Legacy Russian (harmless when RU is never typed).
-            "это", "этот", "эта", "эти", "он", "она", "они", "его", "её", "ее",
-            "их", "там", "туда", "ещё", "еще", "тоже", "также", "подробнее",
         ];
         let has_ref = ql.split_whitespace()
             .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()))
@@ -1482,8 +1472,6 @@ async fn handle_query_stream(
             //   a) queries containing Russian question words (confuses classifier)
             //   b) Statement Guard: queries that START with personal pronouns → QA only
             const QUESTION_WORDS: &[&str] = &[
-                "кто", "что", "где", "когда", "сколько", "почему", "как",
-                "зачем", "чем", "какой", "какая", "какое", "расскажи", "объясни",
                 // English-only beta: keep questions out of the command-classifier so
                 // "who was Newton" is answered, never guessed into a SCREENSHOT/app-open.
                 "who", "what", "where", "when", "why ", "how", "which", "whose",
@@ -1492,8 +1480,6 @@ async fn handle_query_stream(
             ];
             // Statement Guard: pronoun-start queries are always conversational
             const PRONOUN_STARTS: &[&str] = &[
-                "я ", "ты ", "это ", "мне ", "мой ", "моя ", "моё", "моего", "моему",
-                "твой", "твоя", "твоё", "у меня", "у тебя", "мы ", "вы ", "нас ", "вам ",
             ];
             let q_low_s = query_s.to_lowercase();
             let is_question = QUESTION_WORDS.iter().any(|w| q_low_s.contains(w));
@@ -1584,8 +1570,7 @@ async fn handle_query_stream(
                     // - "what was I interested in?" → finds past questions
                     // - repeat question offline → answer is already in the DB
                     let skip = answer.len() < 20
-                        || answer.contains("Не понял команду")
-                        || answer.contains("Не удалось");
+                        || answer.starts_with("I couldn't");
                     if !skip {
                         let qa = format!("Q: {}\nA: {}", query, answer);
                         let _ = librarian.add_event(&qa, "dialogue", "qa").await;
@@ -1945,16 +1930,14 @@ async fn handle_activity(
 // ── Location-aware search enrichment ─────────────────────────────────────────
 
 /// Appends the user's city to location-sensitive search terms.
-/// "погода" + city="Астана" → "погода Астана"
+/// "weather" + city="Astana" → "weather Astana"
 /// Skips enrichment if the term already contains the city.
 fn enrich_search_term(term: &str, city: Option<&str>, original_query: &str) -> String {
     let Some(city) = city else { return term.to_string() };
     let term_lower  = term.to_lowercase();
     let query_lower = original_query.to_lowercase();
     const LOCATION_KWS: &[&str] = &[
-        "погода", "weather", "прогноз", "forecast",
-        "пробки", "трафик", "traffic",
-        "новости", "события",
+        "weather", "forecast", "traffic", "news",
     ];
     let is_location = LOCATION_KWS.iter()
         .any(|kw| term_lower.contains(kw) || query_lower.contains(kw));
@@ -1966,7 +1949,7 @@ fn enrich_search_term(term: &str, city: Option<&str>, original_query: &str) -> S
     }
 }
 
-/// Builds a clickable "Источники" block (markdown links) from web results, so
+/// Builds a clickable "Sources" block (markdown links) from web results, so
 /// the user can open the real sources. Links open in the external browser via
 /// the launcher's navigation handler — they never hijack the chat window.
 fn format_sources(results: &[crate::modules::surfer::WebResult]) -> String {
@@ -1990,11 +1973,10 @@ fn format_sources(results: &[crate::modules::surfer::WebResult]) -> String {
 fn lang_is_cjk(lang: &str) -> bool {
     let l = lang.to_lowercase();
     l.contains("chin") || l.contains("japan") || l.contains("korea")
-        || l.contains("кита") || l.contains("япон") || l.contains("коре")
 }
 
 /// Removes CJK characters from text. The small model occasionally leaks Chinese
-/// tokens into a Russian/English answer (e.g. "活动"); for non-CJK answer
+/// tokens into an English answer (e.g. "活动"); for non-CJK answer
 /// languages we strip them so the user never sees stray glyphs mid-sentence.
 fn strip_cjk(text: &str) -> String {
     text.chars()
@@ -2025,10 +2007,9 @@ struct HistoryResponse {
 }
 
 /// Parses a stored dialogue event into (question, answer). Accepts the current
-/// English "Q:/A:" format and the legacy Russian "Вопрос:/Ответ:" format so old
-/// DB rows still render in the history pane after the English-only switch.
+/// "Q:/A:" format.
 fn parse_stored_qa(text: &str) -> Option<(String, String)> {
-    for (qm, am) in [("Q: ", "\nA: "), ("Вопрос: ", "\nОтвет: ")] {
+    for (qm, am) in [("Q: ", "\nA: ")] {
         if let Some(q_start) = text.find(qm) {
             let rest = &text[q_start + qm.len()..];
             if let Some(a_start) = rest.find(am) {
@@ -2083,14 +2064,13 @@ fn report_request(query: &str) -> Option<i64> {
         "write a report", "write a summary", "make a report", "create a report",
         "write me a report", "write up my", "report on what i", "summarize my week",
         "summarise my week", "summarize my day", "write a doc", "save a report",
-        "напиши отчёт", "напиши отчет", "сделай отчёт", "сделай отчет", "составь отчёт",
     ];
     if !VERBS.iter().any(|v| q.contains(v)) {
         return None;
     }
-    let days = if q.contains("week") || q.contains("недел") {
+    let days = if q.contains("week") {
         7
-    } else if q.contains("month") || q.contains("месяц") {
+    } else if q.contains("month") {
         30
     } else {
         1
@@ -2257,7 +2237,7 @@ fn report_prompt(period: &str, activity: &str, language: &str) -> String {
 /// to emit "**Title:** Activity Report", which became a literal file name.
 fn clean_report_title(raw: &str, fallback: &str) -> String {
     let mut t = raw.trim().trim_matches(['#', '*', '-', ' ']).to_string();
-    for lead in ["title:", "заголовок:", "название:"] {
+    for lead in ["title:"] {
         if t.to_lowercase().starts_with(lead) {
             t = t[lead.len()..].to_string();
         }
@@ -2471,7 +2451,6 @@ mod tests {
         assert_eq!(report_request("summarize my week"), Some(7));
         assert_eq!(report_request("write a report"), Some(1));
         assert_eq!(report_request("make a report of what I did today"), Some(1));
-        assert_eq!(report_request("напиши отчёт за неделю"), Some(7));
         assert_eq!(report_request("write a report of the last month"), Some(30));
     }
 
@@ -2623,7 +2602,6 @@ mod tests {
         assert_eq!(person_in_question("who is David Laid").as_deref(), Some("David Laid"));
         assert_eq!(person_in_question("Who was Alan Turing?").as_deref(), Some("Alan Turing"));
         assert_eq!(person_in_question("who's Elon Musk").as_deref(), Some("Elon Musk"));
-        assert_eq!(person_in_question("кто такой Хабиб").as_deref(), Some("Хабиб"));
     }
 
     // ── user-taught facts about a person ─────────────────────────────────────
@@ -2747,71 +2725,57 @@ mod tests {
     // ── enrich_search_term ────────────────────────────────────────────────────
 
     #[test]
-    fn enrich_pogoda_adds_city() {
-        let r = enrich_search_term("погода", Some("Астана"), "погода");
-        assert_eq!(r, "погода Астана");
-    }
-
-    #[test]
     fn enrich_weather_adds_city() {
-        let r = enrich_search_term("weather today", Some("Москва"), "weather today");
-        assert_eq!(r, "weather today Москва");
+        let r = enrich_search_term("weather today", Some("Astana"), "weather today");
+        assert_eq!(r, "weather today Astana");
     }
 
     #[test]
     fn enrich_no_city_passthrough() {
-        let r = enrich_search_term("погода", None, "погода");
-        assert_eq!(r, "погода");
+        let r = enrich_search_term("weather", None, "weather");
+        assert_eq!(r, "weather");
     }
 
     #[test]
     fn enrich_city_already_present_no_duplicate() {
-        let r = enrich_search_term("погода астана", Some("Астана"), "погода");
-        assert_eq!(r, "погода астана"); // city already in term
+        let r = enrich_search_term("weather astana", Some("Astana"), "weather");
+        assert_eq!(r, "weather astana"); // city already in term
     }
 
     #[test]
     fn enrich_non_location_no_append() {
-        let r = enrich_search_term("курс доллара", Some("Астана"), "курс доллара");
-        assert_eq!(r, "курс доллара"); // not a location keyword
+        let r = enrich_search_term("dollar exchange rate", Some("Astana"), "dollar rate");
+        assert_eq!(r, "dollar exchange rate"); // not a location keyword
     }
 
     #[test]
     fn enrich_forecast_adds_city() {
-        let r = enrich_search_term("прогноз погоды", Some("Киев"), "прогноз");
-        assert_eq!(r, "прогноз погоды Киев");
+        let r = enrich_search_term("weather forecast", Some("Kyiv"), "forecast");
+        assert_eq!(r, "weather forecast Kyiv");
     }
 
     #[test]
-    fn enrich_novosti_adds_city() {
-        let r = enrich_search_term("новости", Some("Москва"), "новости");
-        assert_eq!(r, "новости Москва");
+    fn enrich_news_adds_city() {
+        let r = enrich_search_term("news", Some("Almaty"), "news");
+        assert_eq!(r, "news Almaty");
     }
 
     // ── query_words ───────────────────────────────────────────────────────────
 
     #[test]
     fn query_words_basic() {
-        let w = query_words("привет мир как дела");
-        assert!(w.contains("привет"));
-        assert!(w.contains("мир"));
-        assert!(w.contains("как"));
-        assert!(w.contains("дела"));
-    }
-
-    #[test]
-    fn query_words_filters_short() {
-        // "я" = 2 bytes, "в" = 2 bytes → both filtered by len() > 2
-        // "на" = 4 bytes → kept (Cyrillic short words pass the byte-length filter)
-        let w = query_words("я в");
-        assert!(w.is_empty(), "2-byte Cyrillic words should be filtered by byte length");
+        let w = query_words("hello world how are you");
+        assert!(w.contains("hello"));
+        assert!(w.contains("world"));
+        assert!(w.contains("how"));
+        assert!(w.contains("are"));
     }
 
     #[test]
     fn query_words_lowercased() {
-        let w = query_words("Привет МИР");
-        assert!(w.contains("привет"));
-        assert!(w.contains("мир"));
+        let w = query_words("Hello WORLD");
+        assert!(w.contains("hello"));
+        assert!(w.contains("world"));
     }
 
     #[test]
@@ -2821,18 +2785,15 @@ mod tests {
 
     #[test]
     fn query_words_deduplication() {
-        let w = query_words("тест тест тест");
+        let w = query_words("test test test");
         assert_eq!(w.len(), 1);
     }
 
     #[test]
-    fn query_words_min_len_3() {
-        // "дом" has len 3 in Rust bytes (actually 6 for Cyrillic), but char count is 3
-        // wait: the filter is `w.len() > 2` where len() is byte length
-        // Cyrillic chars are 2 bytes each, so "до" = 4 bytes > 2 → NOT filtered
-        // Let me test with a 2-byte ASCII word
+    fn query_words_filters_short_words() {
+        // The filter is byte-length > 2, so short filler words drop out.
         let w = query_words("hi hello");
-        assert!(!w.contains("hi"), "2-char ASCII word should be filtered");
+        assert!(!w.contains("hi"), "2-char word should be filtered");
         assert!(w.contains("hello"));
     }
 
@@ -2911,53 +2872,46 @@ mod tests {
     // ── handle_history ordering logic ─────────────────────────────────────────
 
     // We test the parsing/ordering logic directly, without needing a live server.
-    // The handle_history function parses "Вопрос: Q\nОтвет: A" strings.
+    // The handle_history function parses "Q: … \nA: …" strings.
 
     fn parse_qa_pair(text: &str) -> Option<(String, String)> {
-        let q_start = text.find("Вопрос: ")?;
-        let rest = &text[q_start + "Вопрос: ".len()..];
-        let a_start = rest.find("\nОтвет: ")?;
+        let q_start = text.find("Q: ")?;
+        let rest = &text[q_start + "Q: ".len()..];
+        let a_start = rest.find("\nA: ")?;
         let q_text = rest[..a_start].trim().to_string();
-        let a_text = rest[a_start + "\nОтвет: ".len()..].trim().to_string();
+        let a_text = rest[a_start + "\nA: ".len()..].trim().to_string();
         Some((q_text, a_text))
     }
 
     #[test]
     fn qa_pair_parses_correctly() {
-        let text = "Вопрос: Что такое Rust?\nОтвет: Системный язык программирования.";
+        let text = "Q: What is Rust?\nA: A systems programming language.";
         let (q, a) = parse_qa_pair(text).unwrap();
-        assert_eq!(q, "Что такое Rust?");
-        assert_eq!(a, "Системный язык программирования.");
+        assert_eq!(q, "What is Rust?");
+        assert_eq!(a, "A systems programming language.");
     }
 
     #[test]
     fn qa_pair_parses_multiline_answer() {
-        let text = "Вопрос: Как дела?\nОтвет: Хорошо.\nСпасибо.";
+        let text = "Q: How are you?\nA: Fine.\nThanks.";
         let (q, a) = parse_qa_pair(text).unwrap();
-        assert_eq!(q, "Как дела?");
-        assert!(a.contains("Хорошо."));
+        assert_eq!(q, "How are you?");
+        assert!(a.contains("Fine."));
     }
 
     #[test]
     fn qa_pair_returns_none_for_malformed() {
-        assert!(parse_qa_pair("Просто текст без маркеров").is_none());
+        assert!(parse_qa_pair("just text with no markers").is_none());
         assert!(parse_qa_pair("").is_none());
-        assert!(parse_qa_pair("Вопрос: без ответа").is_none());
+        assert!(parse_qa_pair("Q: no answer").is_none());
     }
 
-    // ── parse_stored_qa (production parser: English + legacy Russian) ──────────
+    // ── parse_stored_qa (production parser) ───────────────────────────────────
     #[test]
-    fn stored_qa_parses_new_english_format() {
+    fn stored_qa_parses_english_format() {
         let (q, a) = super::parse_stored_qa("Q: What is Rust?\nA: A systems language.").unwrap();
         assert_eq!(q, "What is Rust?");
         assert_eq!(a, "A systems language.");
-    }
-
-    #[test]
-    fn stored_qa_parses_legacy_russian_format() {
-        let (q, a) = super::parse_stored_qa("Вопрос: Что?\nОтвет: Ответ.").unwrap();
-        assert_eq!(q, "Что?");
-        assert_eq!(a, "Ответ.");
     }
 
     #[test]
@@ -3003,9 +2957,9 @@ mod tests {
         // Simulate the correct ordering: pairs come newest-first from recent_qa,
         // iterate in reverse, push user then ai — no final messages.reverse()
         let pairs_newest_first = vec![
-            ("ts3", "Вопрос: Q3\nОтвет: A3"),
-            ("ts2", "Вопрос: Q2\nОтвет: A2"),
-            ("ts1", "Вопрос: Q1\nОтвет: A1"),
+            ("ts3", "Q: Q3\nA: A3"),
+            ("ts2", "Q: Q2\nA: A2"),
+            ("ts1", "Q: Q1\nA: A1"),
         ];
 
         let mut messages: Vec<(&str, String)> = Vec::new();
@@ -3028,7 +2982,7 @@ mod tests {
     #[test]
     fn history_wrong_reverse_detection() {
         // Demonstrates the BUG: messages.reverse() on a flat list swaps user/ai order
-        let pairs = vec!["Вопрос: Q1\nОтвет: A1", "Вопрос: Q2\nОтвет: A2"];
+        let pairs = vec!["Q: Q1\nA: A1", "Q: Q2\nA: A2"];
         let mut messages: Vec<(&str, String)> = Vec::new();
         for text in &pairs {
             if let Some((q, a)) = parse_qa_pair(text) {
@@ -3047,22 +3001,21 @@ mod tests {
     #[test]
     fn cache_entry_jaccard_threshold() {
         // The cache uses Jaccard >= 0.85 for cache hit
-        let q1 = query_words("что такое rust язык программирования");
-        let q2 = query_words("что такое rust язык программ");
+        let q1 = query_words("what is the rust programming language");
+        let q2 = query_words("what is the rust programming");
         let j = jaccard(&q1, &q2);
         // These are similar but not identical — test that the threshold check logic is sane
         assert!(j >= 0.0 && j <= 1.0);
     }
 
     #[test]
-    fn query_words_real_russian_query() {
-        let w = query_words("сколько человек живёт на земле");
-        assert!(w.contains("сколько"));
-        assert!(w.contains("человек"));
-        assert!(w.contains("живёт"));
-        assert!(w.contains("земле"));
-        // "на" is 4 bytes (2 Cyrillic chars × 2 bytes) → len() > 2 → NOT filtered
-        // Actually "на" = н(2) + а(2) = 4 bytes, 4 > 2, so it's kept
-        // But logically "на" is a stopword. That's OK, it's by design.
+    fn query_words_real_query() {
+        let w = query_words("how many people live on earth");
+        assert!(w.contains("many"));
+        assert!(w.contains("people"));
+        assert!(w.contains("live"));
+        assert!(w.contains("earth"));
+        // "on" is 2 bytes → filtered by the byte-length guard, which is what we want.
+        assert!(!w.contains("on"));
     }
 }

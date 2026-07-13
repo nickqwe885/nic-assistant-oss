@@ -3,8 +3,6 @@ use std::os::windows::process::CommandExt;
 use image::DynamicImage;
 use tracing::info;
 
-const KINOPOISK_ALIASES: &[&str] = &["кинопоиск", "кинго", "киного", "кинопоиске"];
-
 const NO_WINDOW: u32 = 0x08000000;
 
 pub struct ActionResult {
@@ -19,7 +17,6 @@ impl ActionResult {
 /// Stripped before the question-guard so those still execute.
 const POLITE_LEADS: &[&str] = &[
     "please ", "can you ", "could you ", "would you ", "will you ", "pls ", "plz ",
-    "пожалуйста ", "можешь ", "можете ", "можно ",
 ];
 
 /// Byte offset of `prefix` in `q` only when it opens the command — i.e. at the
@@ -55,8 +52,6 @@ fn is_question(q: &str) -> bool {
         "how ", "which ", "whose ", "is ", "are ", "was ", "were ", "do ", "does ",
         "did ", "should ", "would ", "could ", "explain ", "tell me", "describe ",
         "define ", "list ", "summarize ", "summarise ",
-        "что ", "кто ", "где ", "когда ", "почему ", "как ", "какой ", "какая ",
-        "какие ", "зачем ", "сколько ", "расскажи", "объясни", "опиши",
     ];
     Q_LEADS.iter().any(|w| q.starts_with(w))
 }
@@ -80,8 +75,8 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
     }
     let q = q_raw; // keep original offsets for the substring scans below
 
-    // ── Absolute volume set: "громкость N" / "volume N" ──────────────────────
-    if q.contains("громкость") || q.contains("volume") {
+    // ── Absolute volume set: "volume 40" ─────────────────────────────────────
+    if q.contains("volume") {
         if let Some(n) = extract_exact_vol(&q) {
             vol_set(n);
             info!("[Pilot] vol_set {}%", n);
@@ -89,49 +84,25 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
         }
     }
 
-    // ── Natural language music control (before keyword checks) ───────────────
-    if (q.contains("переключи") || q.contains("переключай"))
-        && (q.contains("трек") || q.contains("песн") || q.contains("музык")
-            || q.contains("следующ") || q.contains("другую") || q.contains("другой"))
-    {
+    // ── Natural-language music control (before the keyword checks) ───────────
+    if q.contains("switch") && (q.contains("track") || q.contains("song")) {
         media_key(0xB0);
         info!("[Pilot] media next (semantic)");
         return Some(ActionResult::new("Next track."));
     }
-    if (q.contains("останови") || q.contains("остановись"))
-        && (q.contains("музык") || q.contains("трек") || q.contains("песн")
-            || q.contains("плеер") || q.contains("воспр"))
-    {
+    if q.trim() == "stop" {
         media_key(0xB3);
-        info!("[Pilot] media pause (останови)");
+        info!("[Pilot] media pause");
         return Some(ActionResult::new("Paused."));
     }
-    if q.trim() == "стоп" || q.trim() == "stop" {
-        media_key(0xB3);
-        info!("[Pilot] media pause (стоп)");
-        return Some(ActionResult::new("Paused."));
-    }
-    if q.contains("тихонько") {
-        let steps = extract_vol_steps(&q);
-        vol_keys(steps, false);
-        info!("[Pilot] volume down (тихонько)");
-        return Some(ActionResult::new("Volume down."));
-    }
-    if q.contains("убери") && (q.contains("звук") || q.contains("музык")) {
+    if q.contains("turn off") && (q.contains("sound") || q.contains("music")) {
         vol_mute();
-        info!("[Pilot] mute (убери звук)");
+        info!("[Pilot] mute");
         return Some(ActionResult::new("Muted."));
-    }
-    if q.contains("добавь") && (q.contains("громк") || q.contains("звук")) {
-        let steps = extract_vol_steps(&q);
-        vol_keys(steps, true);
-        info!("[Pilot] volume up (добавь)");
-        return Some(ActionResult::new("Volume up."));
     }
 
     // ── Volume ───────────────────────────────────────────────────────────────
-    if q.contains("громче") || q.contains("грмче") || q.contains("увеличь громк") || q.contains("прибавь")
-        || q.contains("louder") || q.contains("volume up")
+    if q.contains("louder") || q.contains("volume up") || q.contains("turn it up")
     {
         let steps = extract_vol_steps(&q);
         vol_keys(steps, true);
@@ -142,8 +113,7 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
             format!("Volume up by {}.", steps)
         }));
     }
-    if q.contains("тише") || q.contains("уменьши громк") || q.contains("убавь") || q.contains("потише")
-        || q.contains("quieter") || q.contains("volume down")
+    if q.contains("quieter") || q.contains("volume down")
     {
         let steps = extract_vol_steps(&q);
         vol_keys(steps, false);
@@ -154,8 +124,7 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
             format!("Volume down by {}.", steps)
         }));
     }
-    if q.contains("без звука") || q.contains("заглуши") || q.contains("выключи звук") || q.contains("мьют") || q.contains("замьют")
-        || q.contains("mute") || q.contains("silence")
+    if q.contains("mute") || q.contains("silence")
     {
         vol_mute();
         info!("[Pilot] mute");
@@ -179,30 +148,27 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
     }
 
     // ── Media playback ───────────────────────────────────────────────────────
-    if q.contains("продолжи") || q.contains("продолжай") || q.contains("возобнови")
-        || q.contains("play ") || q == "play" || q.contains("resume")
+    if q.contains("play ") || q == "play" || q.contains("resume")
     {
         media_key(0xB3);
         info!("[Pilot] media play");
         return Some(ActionResult::new("Playing."));
     }
-    if q == "пауза" || q.contains("поставь на паузу") || q.contains("pause") {
+    if q.contains("pause") {
         media_key(0xB3);
         info!("[Pilot] media pause");
         return Some(ActionResult::new("Paused."));
     }
-    if q.contains("следующ") || q.contains("next track") || q.contains("next song")
+    if q.contains("next track") || q.contains("next song")
         || q == "skip" || q == "next"
     {
         media_key(0xB0);
         info!("[Pilot] media next");
         return Some(ActionResult::new("Next track."));
     }
-    if q.contains("предыдущий трек") || q.contains("предыдущая")
-        || q.contains("предыдущую") || q.contains("прошлый трек")
-        || q.contains("прошлую песн") || q.contains("prev track")
+    if q.contains("prev track")
         || q.contains("previous track") || q.contains("previous song") || q == "previous"
-        || (q.contains("назад") && (q.contains("трек") || q.contains("песн") || q.contains("музык")))
+        || (q.contains("go back") && (q.contains("track") || q.contains("song")))
     {
         media_key(0xB1);
         info!("[Pilot] media prev");
@@ -210,8 +176,7 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
     }
 
     // ── Screenshot ────────────────────────────────────────────────────────────
-    if q.contains("скриншот") || q.contains("скрин") || q.contains("снимок экрана")
-        || q.contains("screenshot") || q.contains("screen shot") || q.contains("capture screen")
+    if q.contains("screenshot") || q.contains("screen shot") || q.contains("capture screen")
     {
         info!("[Pilot] screenshot");
         return Some(do_screenshot().unwrap_or_else(|| ActionResult::new("Couldn't take a screenshot.")));
@@ -219,9 +184,6 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
 
     // ── YouTube search (must be before YouTube open check) ───────────────────
     for prefix in &[
-        "найди на ютубе ", "поищи на ютубе ", "включи на ютубе ",
-        "открой на ютубе ", "поставь на ютубе ", "найди на youtube ",
-        "поищи на youtube ", "найди ютуб ",
         "search youtube for ", "find on youtube ", "play on youtube ",
     ] {
         if let Some(idx) = q.find(prefix) {
@@ -241,7 +203,6 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
     // ("what does google do"). A plain "google X" still reaches the web via the
     // in-chat Surfer path (force_online keywords), which is the nicer behaviour.
     for prefix in &[
-        "погугли ", "поищи в гугле ", "найди в гугле ",
         "search google for ", "search the web for ",
     ] {
         if let Some(idx) = q.find(prefix) {
@@ -255,18 +216,17 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
         }
     }
 
-    // ── Direct YouTube/site mention (short query, no open-verb required) ──────
-    // Catches typos like "вклюбчбюи ютуб" or just "ютуб"
+    // ── Direct site mention (short query, no open-verb required): just "youtube"
     let word_count = q.split_whitespace().count();
-    if word_count <= 3 && (q.contains("ютуб") || q.contains("youtube")) {
+    if word_count <= 3 && q.contains("youtube") {
         open_url("https://www.youtube.com");
         info!("[Pilot] YouTube direct mention");
         return Some(ActionResult::new("Opening YouTube."));
     }
 
     // ── Open / launch ─────────────────────────────────────────────────────────
-    if ["открой", "включи", "запусти", "покажи", "зайди",
-        "open ", "launch ", "start ", "show ", "go to ", "run "].iter().any(|t| q.contains(t))
+    if ["open ", "launch ", "start ", "show ", "go to ", "run "]
+        .iter().any(|t| q.contains(t))
     {
         return try_open(&q, query);
     }
@@ -276,168 +236,146 @@ pub fn try_execute(query: &str) -> Option<ActionResult> {
 
 fn try_open(q: &str, original: &str) -> Option<ActionResult> {
     // Sites
-    if q.contains("ютуб") || q.contains("youtube") {
+    if q.contains("youtube") {
         open_url("https://www.youtube.com");
         return Some(ActionResult::new("Opening YouTube."));
     }
-    if q.contains("гугл") || q.contains("google") {
+    if q.contains("google") {
         open_url("https://www.google.com");
         return Some(ActionResult::new("Opening Google."));
     }
-    if q.contains("гитхаб") || q.contains("github") {
+    if q.contains("github") {
         open_url("https://github.com");
         return Some(ActionResult::new("Opening GitHub."));
     }
-    if q.contains("телеграм") || q.contains("telegram") {
+    if q.contains("telegram") {
         open_url("https://web.telegram.org");
         return Some(ActionResult::new("Opening Telegram."));
     }
-    if q.contains("дискорд") || q.contains("discord") {
+    if q.contains("discord") {
         open_url("https://discord.com/app");
         return Some(ActionResult::new("Opening Discord."));
     }
-    if q.contains("спотифай") || q.contains("спотифи") || q.contains("spotify") {
+    if q.contains("spotify") {
         open_url("https://open.spotify.com");
         return Some(ActionResult::new("Opening Spotify."));
     }
-    if q.contains("твиттер") || q.contains("twitter") {
+    if q.contains("twitter") {
         open_url("https://x.com");
         return Some(ActionResult::new("Opening X (Twitter)."));
     }
-    if q.contains("твич") || q.contains("twitch") {
+    if q.contains("twitch") {
         open_url("https://www.twitch.tv");
         return Some(ActionResult::new("Opening Twitch."));
     }
-    if q.contains("реддит") || q.contains("reddit") {
+    if q.contains("reddit") {
         open_url("https://www.reddit.com");
         return Some(ActionResult::new("Opening Reddit."));
     }
-    if q.contains("стим") || q.contains("steam") {
+    if q.contains("steam") {
         open_url("https://store.steampowered.com");
         return Some(ActionResult::new("Opening Steam."));
     }
-    if q.contains("настройки") || q.contains("settings") {
+    if q.contains("settings") {
         open_url("ms-settings:");
         return Some(ActionResult::new("Opening Settings."));
     }
-    if KINOPOISK_ALIASES.iter().any(|a| q.contains(a)) {
-        open_url("https://www.kinopoisk.ru");
-        return Some(ActionResult::new("Opening Kinopoisk."));
-    }
-    if q.contains("иви") && !q.contains("архив") {
-        open_url("https://www.ivi.ru");
-        return Some(ActionResult::new("Opening ivi."));
-    }
-    if q.contains("окко") {
-        open_url("https://okko.tv");
-        return Some(ActionResult::new("Opening Okko."));
-    }
-    if q.contains("premier") || q.contains("премьер") {
-        open_url("https://premier.one");
-        return Some(ActionResult::new("Opening Premier."));
+    if q.contains("netflix") {
+        open_url("https://www.netflix.com");
+        return Some(ActionResult::new("Opening Netflix."));
     }
 
     // Apps
-    if q.contains("блокнот") || q.contains("notepad") {
+    if q.contains("notepad") {
         spawn_app("notepad.exe");
         return Some(ActionResult::new("Opening Notepad."));
     }
-    if q.contains("калькулятор") || q.contains("calculator") || q.contains("calc") {
+    if q.contains("calculator") || q.contains("calc") {
         spawn_app("calc.exe");
         return Some(ActionResult::new("Opening Calculator."));
     }
-    if q.contains("проводник") || q.contains("explorer") || q.contains("file manager") {
+    if q.contains("explorer") || q.contains("file manager") {
         spawn_app("explorer.exe");
         return Some(ActionResult::new("Opening File Explorer."));
     }
-    if q.contains("вс код") || q.contains("vs code") || q.contains("vscode") || q.contains("визуал") {
+    if q.contains("vs code") || q.contains("vscode") {
         spawn_app("code");
         return Some(ActionResult::new("Opening VS Code."));
     }
-    if q.contains("хром") || q.contains("chrome") {
+    if q.contains("chrome") {
         spawn_app("chrome");
         return Some(ActionResult::new("Opening Chrome."));
     }
-    if q.contains("диспетчер задач") || q.contains("таск менеджер") || q.contains("task manager") {
+    if q.contains("task manager") {
         spawn_app("taskmgr.exe");
         return Some(ActionResult::new("Opening Task Manager."));
     }
-    if q.contains("paint") || q.contains("пейнт") {
+    if q.contains("paint") {
         spawn_app("mspaint.exe");
         return Some(ActionResult::new("Opening Paint."));
     }
-    if q.contains("терминал") || q.contains("консол") || q.contains("командн")
-        || q.contains("terminal") || q.contains("command prompt") || q.contains("cmd")
+    if q.contains("terminal") || q.contains("command prompt") || q.contains("cmd")
     {
         spawn_app("cmd.exe");
         return Some(ActionResult::new("Opening Terminal."));
     }
-    if q.contains("powershell") || q.contains("павершелл") {
+    if q.contains("powershell") {
         spawn_app("powershell.exe");
         return Some(ActionResult::new("Opening PowerShell."));
     }
-    if q.contains("плеер") || q.contains("media player") || q.contains("wmplayer") {
+    if q.contains("media player") || q.contains("wmplayer") {
         spawn_app("wmplayer.exe");
         return Some(ActionResult::new("Opening media player."));
     }
 
-    // ── Fallback: smart routing — search for everything unknown ──────────────
-    // Handles both languages so an English "open <something>" resolves here
-    // deterministically instead of falling through to the small model (which
-    // used to guess a random site).
+    // ── Fallback: smart routing — search for anything we don't recognise ─────
+    // Resolves "open <something>" here deterministically instead of letting it
+    // fall through to the small model, which used to guess a random site.
+    //
     // The verb must START the command. A substring search here was opening a web
     // page for any sentence that merely CONTAINED "show"/"open"/"run"/"start"
     // ("I want to start learning Rust" → opened a search for "learning Rust").
     // Politeness is already stripped above, so "please open X" still lands here.
-    for prefix in &["включи ", "открой ", "запусти ", "покажи ", "зайди на ",
-                    "open ", "show ", "launch ", "run ", "start ", "go to "] {
+    for prefix in &["open ", "show ", "launch ", "run ", "start ", "go to ",
+                    "watch ", "play ", "turn on ", "turn ", "search for ",
+                    "search ", "find ", "google ", "look up "] {
         if let Some(idx) = cmd_start(&q, prefix) {
-            let raw  = original[idx + prefix.len()..].trim().to_string();
-            // "show me …" / "покажи мне …" is a request addressed to NIC, not a
-            // site to open — let it fall through to Q&A. Checked on `raw`, before
-            // strip_fillers eats the pronoun.
+            let raw = original[idx + prefix.len()..].trim().to_string();
+            // "show me …" is a request addressed to NIC, not a site to open — let it
+            // fall through to Q&A. Checked on `raw`, before strip_fillers eats the
+            // pronoun.
             let rl = raw.to_lowercase();
-            if rl.starts_with("me ") || rl.starts_with("us ") || rl.starts_with("мне ") {
+            if rl.starts_with("me ") || rl.starts_with("us ") {
                 return None;
             }
             let term = strip_fillers(&raw);
             if term.len() > 2 {
                 let tlc = term.to_lowercase();
-                // Platform explicitly named inside term
-                let (url, msg) = if KINOPOISK_ALIASES.iter().any(|a| tlc.contains(a)) {
-                    let mut strip_words: Vec<&str> = KINOPOISK_ALIASES.to_vec();
-                    strip_words.extend_from_slice(&["на сайте", "на"]);
-                    let t = strip_platform(&tlc, &strip_words);
+                let (url, msg) = if tlc.contains("youtube")
+                    || tlc.split_whitespace()
+                          .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == "yt")
+                {
+                    // "search his yt channel" must reach YouTube, not the model.
+                    let t = strip_platform(&tlc, &["youtube", "yt", "on"]);
                     if t.is_empty() {
-                        open_url("https://www.kinopoisk.ru");
-                        return Some(ActionResult::new("Opening Kinopoisk."));
+                        open_url("https://www.youtube.com");
+                        return Some(ActionResult::new("Opening YouTube."));
                     }
-                    (format!("https://www.kinopoisk.ru/index.php?kp_query={}", urlencoding::encode(&t)),
-                     format!("Searching «{}» on Kinopoisk.", t))
-                } else if tlc.contains("иви") {
-                    let t = strip_platform(&tlc, &["иви", "на сайте", "на"]);
-                    if t.is_empty() {
-                        open_url("https://www.ivi.ru");
-                        return Some(ActionResult::new("Openingivi."));
-                    }
-                    (format!("https://www.ivi.ru/search/?q={}", urlencoding::encode(&t)),
-                     format!("Searching «{}» on ivi.", t))
-                } else if tlc.contains("ютуб") || tlc.contains("youtube") {
-                    let t = strip_platform(&tlc, &["ютубе", "ютуб", "youtube", "на"]);
                     (format!("https://www.youtube.com/results?search_query={}", urlencoding::encode(&t)),
                      format!("Searching YouTube: «{}».", t))
-                } else if ["video", "видео", "clip", "клип"].iter().any(|t| tlc.contains(t)) {
+                } else if ["video", "clip"].iter().any(|t| tlc.contains(t)) {
                     // "open a video about X" → actually PLAY the first result,
-                    // fullscreen. Diverges (returns from the fn), so the tuple
-                    // type below is unaffected.
+                    // fullscreen. Diverges (returns from the fn), so the tuple type
+                    // below is unaffected.
                     let t = strip_content_type(&tlc);
                     return Some(play_youtube_first(&t));
                 } else {
-                    // "включи"/"покажи"/"watch" imply watching — add "watch online";
+                    // "watch"/"play" imply watching → search for somewhere to watch it;
                     // a plain "open X" just searches for X.
-                    let is_watch = matches!(*prefix, "включи " | "покажи ");
-                    let is_video = is_watch || ["сериал", "фильм", "кино", "мультик", "аниме",
-                        "серию", "серия", "movie", "series", "episode"].iter().any(|t| tlc.contains(t));
+                    let is_watch = matches!(*prefix, "watch " | "play ");
+                    let is_video = is_watch
+                        || ["movie", "series", "episode", "season", "show", "anime", "cartoon"]
+                            .iter().any(|t| tlc.contains(t));
                     let sq = if is_video {
                         format!("{} watch online", strip_content_type(&tlc))
                     } else {
@@ -665,9 +603,9 @@ fn ps_hidden(script: &str) {
 }
 
 fn extract_vol_steps(q: &str) -> u32 {
-    // Parse "на N" → N steps; default 4
-    if let Some(idx) = q.find("на ") {
-        let rest: String = q[idx + "на ".len()..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    // "turn it up by 5" → 5 steps; default 4.
+    if let Some(idx) = q.find("by ") {
+        let rest: String = q[idx + "by ".len()..].chars().take_while(|c| c.is_ascii_digit()).collect();
         if let Ok(n) = rest.parse::<u32>() {
             return n.clamp(1, 50);
         }
@@ -676,7 +614,7 @@ fn extract_vol_steps(q: &str) -> u32 {
 }
 
 fn extract_exact_vol(q: &str) -> Option<u32> {
-    for kw in ["громкость", "volume"] {
+    for kw in ["volume to", "volume"] {
         if let Some(idx) = q.find(kw) {
             let rest = q[idx + kw.len()..].trim_start();
             let num: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -744,8 +682,7 @@ fn strip_platform(s: &str, words: &[&str]) -> String {
 
 fn strip_fillers(s: &str) -> String {
     const FILLERS: &[&str] = &[
-        "пожалуйста", "в браузере", "в интернете", "в угле", "в углу",
-        "на сайте", "мне", "ну-ка", "сейчас", "быстро", "срочно",
+        "please", "pls", "plz", "quickly", "right now", "for me", "just",
     ];
     let mut result = s.to_string();
     for f in FILLERS {
@@ -755,7 +692,7 @@ fn strip_fillers(s: &str) -> String {
 }
 
 fn strip_content_type(s: &str) -> String {
-    const TYPES: &[&str] = &["сериало", "сериал", "фильм", "мультик", "аниме", "кино"];
+    const TYPES: &[&str] = &["series", "movie", "film", "cartoon", "anime", "episode"];
     let mut result = s.trim().to_string();
     for t in TYPES {
         result = result.replace(&format!(" {}", t), "");
@@ -810,7 +747,7 @@ mod tests {
         assert!(try_execute("can you show me what you can do").is_none());
         assert!(try_execute("do you open apps?").is_none());
         assert!(try_execute("what does paint mean").is_none());
-        assert!(try_execute("что такое диспетчер задач").is_none());
+        assert!(try_execute("what is the task manager").is_none());
     }
 
     #[test]
@@ -824,69 +761,61 @@ mod tests {
     #[test]
     fn show_me_is_a_request_not_a_site() {
         assert!(try_execute("show me the raw screen log").is_none());
-        assert!(try_execute("покажи мне логи").is_none());
+        assert!(try_execute("show me the logs").is_none());
     }
 
     // ── extract_vol_steps ─────────────────────────────────────────────────────
 
     #[test]
-    fn vol_steps_default_no_na() {
-        assert_eq!(extract_vol_steps("громче"), 4);
+    fn vol_steps_default_without_by() {
+        assert_eq!(extract_vol_steps("louder"), 4);
     }
 
     #[test]
-    fn vol_steps_default_no_digit_after_na() {
-        // "на " found but no digit follows — return default
-        assert_eq!(extract_vol_steps("громче на много"), 4);
+    fn vol_steps_default_no_digit_after_by() {
+        // "by " found but no digit follows — return the default.
+        assert_eq!(extract_vol_steps("louder by a lot"), 4);
     }
 
     #[test]
     fn vol_steps_parses_single_digit() {
-        assert_eq!(extract_vol_steps("громче на 5"), 5);
+        assert_eq!(extract_vol_steps("louder by 5"), 5);
     }
 
     #[test]
     fn vol_steps_parses_two_digits() {
-        assert_eq!(extract_vol_steps("тише на 20"), 20);
+        assert_eq!(extract_vol_steps("quieter by 20"), 20);
     }
 
     #[test]
     fn vol_steps_clamps_to_50() {
-        assert_eq!(extract_vol_steps("громче на 99"), 50);
+        assert_eq!(extract_vol_steps("louder by 99"), 50);
     }
 
     #[test]
     fn vol_steps_clamps_min_to_1() {
         // "0" parses fine as u32; clamp(1, 50) → 1
-        assert_eq!(extract_vol_steps("громче на 0"), 1);
+        assert_eq!(extract_vol_steps("louder by 0"), 1);
     }
 
     #[test]
-    fn vol_steps_na_with_leading_spaces() {
-        assert_eq!(extract_vol_steps("  громче на 3  "), 3);
+    fn vol_steps_with_surrounding_spaces() {
+        assert_eq!(extract_vol_steps("  louder by 3  "), 3);
     }
 
     #[test]
-    fn vol_steps_correct_utf8_slice() {
-        // "на ".len() == 5 bytes, not 3. This MUST NOT panic.
-        let result = std::panic::catch_unwind(|| extract_vol_steps("громче на 7"));
-        assert!(result.is_ok(), "extract_vol_steps panicked — UTF-8 slice bug not fixed");
-        assert_eq!(result.unwrap(), 7);
-    }
-
-    #[test]
-    fn vol_steps_na_at_start() {
-        assert_eq!(extract_vol_steps("на 10"), 10);
+    fn vol_steps_by_at_start() {
+        assert_eq!(extract_vol_steps("by 10"), 10);
     }
 
     #[test]
     fn vol_steps_max_boundary() {
-        assert_eq!(extract_vol_steps("громче на 50"), 50);
+        assert_eq!(extract_vol_steps("louder by 50"), 50);
     }
 
     #[test]
     fn vol_steps_just_above_max() {
-        assert_eq!(extract_vol_steps("громче на 51"), 50);
+        assert_eq!(extract_vol_steps("louder by 51"), 50);
     }
 
     #[test]
@@ -896,39 +825,39 @@ mod tests {
 
     #[test]
     fn vol_steps_digit_1() {
-        assert_eq!(extract_vol_steps("тише на 1"), 1);
+        assert_eq!(extract_vol_steps("quieter by 1"), 1);
     }
 
     // ── extract_exact_vol ─────────────────────────────────────────────────────
 
     #[test]
     fn exact_vol_basic() {
-        assert_eq!(extract_exact_vol("громкость 75"), Some(75));
+        assert_eq!(extract_exact_vol("volume 75"), Some(75));
     }
 
     #[test]
     fn exact_vol_zero() {
-        assert_eq!(extract_exact_vol("громкость 0"), Some(0));
+        assert_eq!(extract_exact_vol("volume 0"), Some(0));
     }
 
     #[test]
     fn exact_vol_100() {
-        assert_eq!(extract_exact_vol("громкость 100"), Some(100));
+        assert_eq!(extract_exact_vol("volume 100"), Some(100));
     }
 
     #[test]
     fn exact_vol_clamps_above_100() {
-        assert_eq!(extract_exact_vol("громкость 150"), Some(100));
+        assert_eq!(extract_exact_vol("volume 150"), Some(100));
     }
 
     #[test]
     fn exact_vol_no_digit() {
-        assert_eq!(extract_exact_vol("громкость высокая"), None);
+        assert_eq!(extract_exact_vol("volume high"), None);
     }
 
     #[test]
     fn exact_vol_no_keyword() {
-        assert_eq!(extract_exact_vol("сделай 50"), None);
+        assert_eq!(extract_exact_vol("make it 50"), None);
     }
 
     #[test]
@@ -938,23 +867,28 @@ mod tests {
 
     #[test]
     fn exact_vol_keyword_only() {
-        assert_eq!(extract_exact_vol("громкость"), None);
+        assert_eq!(extract_exact_vol("volume"), None);
     }
 
     #[test]
     fn exact_vol_two_digit() {
-        assert_eq!(extract_exact_vol("громкость 42"), Some(42));
+        assert_eq!(extract_exact_vol("volume 42"), Some(42));
     }
 
     #[test]
     fn exact_vol_with_prefix_text() {
-        assert_eq!(extract_exact_vol("сделай громкость 80"), Some(80));
+        assert_eq!(extract_exact_vol("set the volume 80"), Some(80));
+    }
+
+    #[test]
+    fn exact_vol_set_volume_to_n() {
+        assert_eq!(extract_exact_vol("set volume to 60"), Some(60));
     }
 
     #[test]
     fn exact_vol_correct_utf8_slice() {
-        // "громкость".len() == 18 bytes — must not panic
-        let result = std::panic::catch_unwind(|| extract_exact_vol("громкость 55"));
+        // A multi-byte query must not panic the slicing.
+        let result = std::panic::catch_unwind(|| extract_exact_vol("volume 55"));
         assert!(result.is_ok(), "extract_exact_vol panicked — UTF-8 bug");
         assert_eq!(result.unwrap(), Some(55));
     }
@@ -1030,23 +964,23 @@ mod tests {
     // ── strip_fillers ─────────────────────────────────────────────────────────
 
     #[test]
-    fn strip_fillers_removes_pozhaluysta() {
-        let r = strip_fillers("открой пожалуйста ютуб");
-        assert!(!r.contains("пожалуйста"));
-        assert!(r.contains("ютуб"));
+    fn strip_fillers_removes_please() {
+        let r = strip_fillers("open please youtube");
+        assert!(!r.contains("please"));
+        assert!(r.contains("youtube"));
     }
 
     #[test]
     fn strip_fillers_removes_multiple() {
-        let r = strip_fillers("срочно пожалуйста открой");
-        assert!(!r.contains("срочно"));
-        assert!(!r.contains("пожалуйста"));
+        let r = strip_fillers("quickly please open");
+        assert!(!r.contains("quickly"));
+        assert!(!r.contains("please"));
     }
 
     #[test]
     fn strip_fillers_preserves_content() {
-        let r = strip_fillers("открой фильм");
-        assert_eq!(r, "открой фильм");
+        let r = strip_fillers("open a movie");
+        assert_eq!(r, "open a movie");
     }
 
     #[test]
@@ -1056,13 +990,13 @@ mod tests {
 
     #[test]
     fn strip_fillers_only_filler() {
-        let r = strip_fillers("пожалуйста");
+        let r = strip_fillers("please");
         assert_eq!(r, "");
     }
 
     #[test]
     fn strip_fillers_normalizes_spaces() {
-        let r = strip_fillers("открой   пожалуйста   ютуб");
+        let r = strip_fillers("open   please   youtube");
         assert!(!r.contains("  "));
     }
 
@@ -1070,27 +1004,27 @@ mod tests {
 
     #[test]
     fn strip_content_type_removes_serial() {
-        let r = strip_content_type("ведьмак сериал");
-        assert!(!r.contains("сериал"), "got: {}", r);
-        assert!(r.contains("ведьмак"), "got: {}", r);
+        let r = strip_content_type("the witcher series");
+        assert!(!r.contains("series"), "got: {}", r);
+        assert!(r.contains("witcher"), "got: {}", r);
     }
 
     #[test]
     fn strip_content_type_removes_film() {
-        let r = strip_content_type("интерстеллар фильм");
-        assert!(!r.contains("фильм"), "got: {}", r);
+        let r = strip_content_type("interstellar movie");
+        assert!(!r.contains("movie"), "got: {}", r);
     }
 
     #[test]
     fn strip_content_type_removes_anime() {
-        let r = strip_content_type("наруто аниме");
-        assert!(!r.contains("аниме"), "got: {}", r);
+        let r = strip_content_type("naruto anime");
+        assert!(!r.contains("anime"), "got: {}", r);
     }
 
     #[test]
     fn strip_content_type_preserves_no_type() {
-        let r = strip_content_type("интерстеллар");
-        assert_eq!(r, "интерстеллар");
+        let r = strip_content_type("interstellar");
+        assert_eq!(r, "interstellar");
     }
 
     #[test]
@@ -1100,42 +1034,42 @@ mod tests {
 
     #[test]
     fn strip_content_type_only_type_word() {
-        let r = strip_content_type("фильм");
+        let r = strip_content_type("movie");
         assert_eq!(r, "");
     }
 
     #[test]
-    fn strip_content_type_multikino() {
-        let r = strip_content_type("том и джерри мультик");
-        assert!(!r.contains("мультик"));
-        assert!(r.contains("том и джерри"));
+    fn strip_content_type_cartoon() {
+        let r = strip_content_type("tom and jerry cartoon");
+        assert!(!r.contains("cartoon"));
+        assert!(r.contains("tom and jerry"));
     }
 
     // ── strip_platform ────────────────────────────────────────────────────────
 
     #[test]
     fn strip_platform_removes_word() {
-        let r = strip_platform("найди ведьмак на ютубе", &["ютубе", "на"]);
-        assert!(!r.contains("ютубе"));
-        assert!(!r.contains(" на "));
-        assert!(r.contains("ведьмак"));
+        let r = strip_platform("find the witcher on youtube", &["youtube", "on"]);
+        assert!(!r.contains("youtube"));
+        assert!(!r.contains(" on "));
+        assert!(r.contains("witcher"));
     }
 
     #[test]
     fn strip_platform_empty_words() {
-        let r = strip_platform("ведьмак", &[]);
-        assert_eq!(r, "ведьмак");
+        let r = strip_platform("witcher", &[]);
+        assert_eq!(r, "witcher");
     }
 
     #[test]
     fn strip_platform_all_stripped() {
-        let r = strip_platform("на ютубе", &["ютубе", "на"]);
+        let r = strip_platform("on youtube", &["youtube", "on"]);
         assert_eq!(r, "");
     }
 
     #[test]
     fn strip_platform_normalizes_spaces() {
-        let r = strip_platform("ведьмак   на   ютубе", &["ютубе", "на"]);
+        let r = strip_platform("witcher   on   youtube", &["youtube", "on"]);
         assert!(!r.contains("  "));
     }
 
@@ -1252,10 +1186,10 @@ mod tests {
 
     #[test]
     fn execute_intent_web_search_with_param() {
-        let r = execute_intent("WEB_SEARCH:погода москва");
+        let r = execute_intent("WEB_SEARCH:weather london");
         assert!(r.is_some());
         let msg = r.unwrap().message;
-        assert!(msg.contains("Google") || msg.contains("Ищу"));
+        assert!(msg.contains("Google") || msg.contains("Searching"));
     }
 
     #[test]
@@ -1314,30 +1248,30 @@ mod tests {
     // ── Vol steps edge cases ──────────────────────────────────────────────────
 
     #[test]
-    fn vol_steps_na_with_spaces_around() {
-        assert_eq!(extract_vol_steps("сделай на 8 громче"), 8);
+    fn vol_steps_by_with_words_around() {
+        assert_eq!(extract_vol_steps("make it louder by 8"), 8);
     }
 
     #[test]
-    fn vol_steps_multiple_na_uses_first() {
-        // "на 3 на 5" — should take first match (3)
-        assert_eq!(extract_vol_steps("громче на 3 на 5"), 3);
+    fn vol_steps_multiple_by_uses_first() {
+        // "by 3 by 5" — should take the first match (3).
+        assert_eq!(extract_vol_steps("louder by 3 by 5"), 3);
     }
 
     #[test]
     fn vol_steps_digit_immediately_after_space() {
-        assert_eq!(extract_vol_steps("тише на 2"), 2);
+        assert_eq!(extract_vol_steps("quieter by 2"), 2);
     }
 
     #[test]
     fn exact_vol_with_noise_chars() {
         // Digits-only parsing stops at non-digit
-        assert_eq!(extract_exact_vol("громкость 50%"), Some(50));
+        assert_eq!(extract_exact_vol("volume 50%"), Some(50));
     }
 
     #[test]
     fn exact_vol_first_digit_sequence() {
-        assert_eq!(extract_exact_vol("громкость 25 пожалуйста"), Some(25));
+        assert_eq!(extract_exact_vol("volume 25 please"), Some(25));
     }
 
     // ── Regression: ensure no UTF-8 panic on common voice commands ───────────
@@ -1345,9 +1279,8 @@ mod tests {
     #[test]
     fn no_panic_common_volume_commands() {
         let commands = [
-            "громче", "тише", "громче на 5", "тише на 10",
-            "громкость 70", "без звука", "убавь на 3",
-            "прибавь на 7", "тихонько на 2",
+            "volume up", "volume down", "louder", "quieter", "mute", "silence",
+            "volume 50", "turn it up by 3", "set volume to 100",
         ];
         for cmd in &commands {
             let _ = std::panic::catch_unwind(|| {
@@ -1361,9 +1294,8 @@ mod tests {
     #[test]
     fn no_panic_common_media_commands() {
         let commands = [
-            "следующий трек", "предыдущая песня", "пауза",
-            "продолжи", "стоп", "поставь на паузу",
-            "переключи трек", "останови музыку",
+            "play", "pause", "stop", "next track", "previous track", "skip",
+            "resume", "play some music",
         ];
         for cmd in &commands {
             let _ = std::panic::catch_unwind(|| {
@@ -1375,9 +1307,7 @@ mod tests {
     #[test]
     fn no_panic_common_open_commands() {
         let commands = [
-            "открой ютуб", "включи spotify", "запусти telegram",
-            "открой блокнот", "включи калькулятор", "открой github",
-            "покажи настройки", "открой reddit", "open video about cats",
+            "open video about cats",
         ];
         for cmd in &commands {
             let _ = std::panic::catch_unwind(|| {

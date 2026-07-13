@@ -31,7 +31,7 @@ fn is_code_editor(app_name: &str) -> bool {
 
 /// True while a known game / anti-cheat process owns the foreground window.
 /// Writer: the foreground-hook thread (AcqRel). Reader: the screen-capture loop
-/// (Acquire). Explicit ordering per MASTER_PLAN §8г — never Relaxed.
+/// (Acquire). Explicit ordering per MASTER_PLAN §8d — never Relaxed.
 static GAME_FOREGROUND: AtomicBool = AtomicBool::new(false);
 
 /// Screen-reading consent. Defaults to `false` so a fresh install captures
@@ -302,7 +302,7 @@ impl Sentinel {
                 // Anti-cheat guard (§4): a known game / anti-cheat owns the
                 // foreground — do not touch the screen, so kernel anti-cheats
                 // (Vanguard/EAC) never observe a capture. Set by the foreground
-                // hook thread; read here with Acquire (§8г).
+                // hook thread; read here with Acquire (§8d).
                 if game_in_foreground() {
                     continue;
                 }

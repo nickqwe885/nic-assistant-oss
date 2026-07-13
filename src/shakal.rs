@@ -44,9 +44,9 @@ const MESSENGER_APPS: &[&str] = &[
 ];
 
 const WORK_TRIGGER_KEYWORDS: &[&str] = &[
-    "задача", "task", "deploy", "баг", "bug", "релиз", "release",
-    "pr ", "pull request", "merge", "issue", "срочно", "urgent",
-    "встреча", "meeting", "дедлайн", "deadline", "проект",
+    "task", "deploy", "bug", "release",
+    "pr ", "pull request", "merge", "issue", "urgent",
+    "meeting", "deadline",
 ];
 
 fn is_messenger_noise(app_name: &str, window_title: &str) -> bool {
@@ -158,13 +158,13 @@ impl ShakalProcessor {
         app_name:     &str,
     ) -> Option<CaptureFrame> {
         if Self::is_private(window_title) {
-            info!("[Shakal/Privacy] Захват заблокирован — «{}»", window_title);
+            info!("[Shakal/Privacy] Capture blocked — «{}»", window_title);
             return None;
         }
 
         // Garbage detector: skip personal messenger chats unless work keywords present
         if is_messenger_noise(app_name, window_title) {
-            info!("[Shakal/Garbage] Мессенджер без рабочих ключевых слов — пропуск: {}", app_name);
+            info!("[Shakal/Garbage] Messenger with no work keywords — skipping: {}", app_name);
             return None;
         }
 

@@ -1,10 +1,10 @@
-/// InitiativeLoop — автономный анализатор активности.
+/// InitiativeLoop — autonomous activity analyser.
 ///
-/// Каждые 10 минут забирает сводку последней активности из Librarian
-/// и спрашивает Thinker: есть ли срочная задача / напоминание для пользователя.
+/// Every 10 minutes it pulls a recent-activity summary from the Librarian
+/// and asks the Thinker whether there is an urgent task or reminder for the user.
 ///
-/// Если ответ содержит маркер `[ACTION: REMIND("текст")]` — показывает
-/// desktop-уведомление через notify-rust. Иначе (IDLE) — молчит.
+/// If the reply carries an `[ACTION: REMIND("text")]` marker it raises a
+/// desktop notification via notify-rust. Otherwise (IDLE) it stays silent.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use crate::librarian::Librarian;
 use crate::modules::thinker::Thinker;
 
-const INTERVAL_SECS: u64 = 600; // 10 минут
+const INTERVAL_SECS: u64 = 600; // 10 minutes
 /// Hard cap: at most this many proactive reminders per day. Initiative must be
 /// rare and dismissible, never a nagging "Clippy".
 const MAX_PER_DAY: usize = 2;
@@ -112,7 +112,7 @@ fn build_prompt(activity: &str, language: &str) -> String {
     )
 }
 
-/// Парсит `[ACTION: REMIND("...")]` из ответа LLM.
+/// Parses `[ACTION: REMIND("...")]` out of the LLM reply.
 fn parse_remind(text: &str) -> Option<String> {
     let prefix = "[ACTION: REMIND(\"";
     let suffix = "\")]";
@@ -133,8 +133,8 @@ mod tests {
 
     #[test]
     fn remind_basic_extraction() {
-        let r = parse_remind(r#"[ACTION: REMIND("встреча в 15:00")]"#);
-        assert_eq!(r, Some("встреча в 15:00".to_string()));
+        let r = parse_remind(r#"[ACTION: REMIND("meeting at 15:00")]"#);
+        assert_eq!(r, Some("meeting at 15:00".to_string()));
     }
 
     #[test]
@@ -168,8 +168,8 @@ mod tests {
 
     #[test]
     fn remind_embedded_in_longer_text() {
-        let text = "Вижу задачу. [ACTION: REMIND(\"позвони клиенту\")] Спасибо.";
-        assert_eq!(parse_remind(text), Some("позвони клиенту".to_string()));
+        let text = "I see a task. [ACTION: REMIND(\"call the client\")] Thanks.";
+        assert_eq!(parse_remind(text), Some("call the client".to_string()));
     }
 
     #[test]
@@ -190,8 +190,8 @@ mod tests {
 
     #[test]
     fn remind_cyrillic_message() {
-        let r = parse_remind(r#"[ACTION: REMIND("Закрыть задачу в Jira к пятнице")]"#);
-        assert_eq!(r, Some("Закрыть задачу в Jira к пятнице".to_string()));
+        let r = parse_remind(r#"[ACTION: REMIND("Close the Jira ticket by Friday")]"#);
+        assert_eq!(r, Some("Close the Jira ticket by Friday".to_string()));
     }
 
     #[test]
@@ -231,8 +231,8 @@ mod tests {
 
     #[test]
     fn build_prompt_contains_activity() {
-        let p = build_prompt("открыт Rust код", "Russian");
-        assert!(p.contains("открыт Rust код"));
+        let p = build_prompt("Rust code is open", "English");
+        assert!(p.contains("Rust code is open"));
     }
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn build_prompt_no_panic_unicode() {
-        let _ = build_prompt("Сегодня работал с Rust 🦀 и LanceDB", "Russian");
+        let _ = build_prompt("Today I worked with Rust 🦀 and LanceDB", "English");
     }
 }
 

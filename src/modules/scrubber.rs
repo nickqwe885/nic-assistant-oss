@@ -40,13 +40,13 @@ const PRIVATE_WINDOW_MARKERS: &[&str] = &[
     // Wallets & crypto
     "metamask", "phantom wallet", "trust wallet", "tonkeeper", "exodus wallet",
     "ledger live", "trezor", "seed phrase", "recovery phrase", "secret phrase",
-    "private key", "мнемоническая", "секретная фраза",
+    "private key",
     // Password managers
     "1password", "bitwarden", "lastpass", "keepass", "dashlane", "nordpass",
-    "password manager", "менеджер паролей",
+    "password manager",
     // Auth & banking screens
-    "sign in", "log in", "password", "пароль", "войти в аккаунт",
-    "online banking", "интернет-банк", "kaspi", "halyk", "sberbank",
+    "sign in", "log in", "password",
+    "online banking", "kaspi", "halyk", "sberbank",
 ];
 
 /// True when a window must never be captured, based on its title/app name.
@@ -323,7 +323,7 @@ mod tests {
     fn private_windows_are_recognized() {
         assert!(is_private_window("MetaMask - Google Chrome", "chrome.exe"));
         assert!(is_private_window("Bitwarden — vault", "bitwarden.exe"));
-        assert!(is_private_window("Kaspi.kz — Мой банк", "chrome.exe"));
+        assert!(is_private_window("Kaspi.kz — My bank", "chrome.exe"));
         assert!(is_private_window("Reveal secret phrase", "chrome.exe"));
     }
 

@@ -252,6 +252,7 @@ async fn init_backend() -> Result<()> {
         incognito,
         api_key,
         last_exchange: Arc::new(tokio::sync::Mutex::new(None)),
+        entity:        Arc::new(tokio::sync::Mutex::new(None)),
         llm_url:       server_url.clone(),
         answer_cache:  Arc::new(tokio::sync::Mutex::new(Vec::new())),
         profile:       Arc::new(tokio::sync::Mutex::new(cfg.profile.clone())),

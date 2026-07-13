@@ -44,12 +44,12 @@ pub fn results_to_snippets(results: &[WebResult]) -> String {
 /// True if the query is explicitly about VK — only then do we keep vk.com results.
 fn wants_vk(query: &str) -> bool {
     let q = query.to_lowercase();
-    q.contains("vk") || q.contains("вк") || q.contains("вконтакте")
+    q.contains("vk")
 }
 
 /// Drop a result that points at VK unless the user actually asked about VK.
-fn skip_vk(wants: bool, href: &str, title: &str) -> bool {
-    !wants && (href.contains("vk.com") || title.to_lowercase().contains("вконтакте"))
+fn skip_vk(wants: bool, href: &str, _title: &str) -> bool {
+    !wants && href.contains("vk.com")
 }
 
 /// Parse DuckDuckGo's main HTML endpoint (`html.duckduckgo.com/html/`).
@@ -157,7 +157,6 @@ pub fn fetch_web_results_sync(query: &str) -> Vec<WebResult> {
 /// returns what the user actually asked for: that creator's latest video.
 const LATEST_MARKERS: &[&str] = &[
     "last video", "latest video", "newest video", "new video", "recent video",
-    "последнее видео", "новое видео", "свежее видео",
 ];
 
 pub fn first_youtube_watch_url(query: &str) -> Option<String> {
@@ -226,8 +225,6 @@ impl Surfer {
         let q = query.to_lowercase();
 
         let negation_block = [
-            "не ищи", "не искать", "без интернет", "не интернет",
-            "локально", "оффлайн", "только локально",
             // English-only beta (§9[1])
             "don't search", "do not search", "no internet", "without internet",
             "offline", "locally", "local only",
@@ -239,20 +236,10 @@ impl Surfer {
 
         let local_only = [
             // Identity
-            "кто ты", "как тебя зовут", "твоё имя", "твое имя",
-            "что ты", "ты умеешь", "ты можешь", "расскажи о себе",
-            "твои возможности", "что умеешь",
             // Local context
-            "посчитай", "напомни", "файл", "время", "дата",
-            "экран", "терминал", "я писал", "в консоли",
-            "моя версия", "у меня", "в системе", "версия",
             // General knowledge — model knows these
-            "что такое", "что значит", "объясни", "как работает",
             // Coding / generation tasks
-            "напиши", "сгенерируй", "придумай", "составь", "помоги",
-            "пример", "как написать", "как сделать",
             // Math
-            "сколько будет", "вычисли", "реши",
             // English-only beta (§9[1]) — mirror the categories above.
             "who are you", "what are you", "your name", "what can you do",
             "tell me about yourself", "what do you do",
@@ -272,38 +259,16 @@ impl Surfer {
         // Only go to web for high-confidence real-time signals
         let force_online = [
             // News / time-sensitive
-            "новости", "сегодня",
             // Finance
-            "курс", "акции", "биткоин", "крипто", "валют",
             // Weather
-            "погода", "прогноз",
             // People / companies
-            "биография", "состояние",
             "openai", "tesla", "apple", "nvidia", "spacex",
             // Explicit search commands
-            "поищи", "найди в интернет", "погугли", "в интернете",
             // World facts / statistics
-            "население", "численность", "сколько людей", "сколько человек",
-            "население земли", "население планеты",
-            "сколько стоит", "стоимость", "цена",
-            "рекорд", "мировой рекорд",
-            "когда основан", "год основания",
-            "сколько стран", "сколько городов",
             // Follow-up precision requests
-            "точная цифра", "точное число", "точные данные",
-            "уточни", "уточните", "а точно", "а именно",
-            "конкретная цифра", "конкретно сколько",
             // Historical facts
-            "сколько длилась", "сколько продолжалась", "сколько длилось", "сколько шла",
-            "когда умер", "когда родился", "когда родилась", "когда умерла",
-            "когда началась", "когда закончилась", "когда произошло", "когда был",
-            "сколько лет назад", "в каком году",
             // People and characters
-            "кто такой", "кто такая", "кто это", "кто был", "кто была",
-            "персонаж", "из аниме", "из сериала", "из фильма", "из манги", "из игры",
-            "кто написал", "кто создал", "кто придумал", "кто изобрёл",
             // Misc facts
-            "что за",
             // English-only beta (§9[1]) — realtime / factual signals.
             "news", "today", "latest", "right now", "current",
             "weather", "forecast",
@@ -378,21 +343,21 @@ impl Surfer {
         // DuckDuckGo's HTML endpoint blocks GET with an "anomaly" page; it only
         // serves results to a POST form. When it is throttled (0 results), we
         // fall back to the Lite endpoint, which has stable, simple markup.
-        info!("[Surfer] HTTP запрос к DuckDuckGo (html)…");
+        info!("[Surfer] HTTP request to DuckDuckGo (html)…");
         if let Some(body) = self.ddg_post("https://html.duckduckgo.com/html/", query).await {
             let out = parse_ddg_html(&body, query);
             if !out.is_empty() {
-                info!("[Surfer] Найдено {} сниппетов (html)", out.len());
+                info!("[Surfer] {} snippets found (html)", out.len());
                 return Ok(results_to_snippets(&out));
             }
         }
-        info!("[Surfer] html endpoint пуст — пробую lite…");
+        info!("[Surfer] html endpoint empty — trying lite…");
         if let Some(body) = self.ddg_post("https://lite.duckduckgo.com/lite/", query).await {
             let out = parse_ddg_lite(&body, query);
-            info!("[Surfer] Найдено {} сниппетов (lite)", out.len());
+            info!("[Surfer] {} snippets found (lite)", out.len());
             return Ok(results_to_snippets(&out));
         }
-        info!("[Surfer] Найдено 0 сниппетов");
+        info!("[Surfer] 0 snippets found");
         Ok(String::new())
     }
 }
@@ -407,22 +372,22 @@ mod tests {
 
     #[test]
     fn negation_ne_ishi_blocks() {
-        assert!(!Surfer::needs_internet_pub("не ищи в интернете"));
+        assert!(!Surfer::needs_internet_pub("don't search the internet"));
     }
 
     #[test]
     fn negation_bez_internet_blocks() {
-        assert!(!Surfer::needs_internet_pub("ответь без интернета"));
+        assert!(!Surfer::needs_internet_pub("answer without internet"));
     }
 
     #[test]
     fn negation_lokalno_blocks() {
-        assert!(!Surfer::needs_internet_pub("локально найди ответ"));
+        assert!(!Surfer::needs_internet_pub("answer locally"));
     }
 
     #[test]
     fn negation_offlajn_blocks() {
-        assert!(!Surfer::needs_internet_pub("работай оффлайн"));
+        assert!(!Surfer::needs_internet_pub("work offline"));
     }
 
     // ── needs_internet: English (English-only beta) ──────────────────────────
@@ -450,136 +415,121 @@ mod tests {
 
     #[test]
     fn local_kto_ty_blocks() {
-        assert!(!Surfer::needs_internet_pub("кто ты такой"));
+        assert!(!Surfer::needs_internet_pub("who are you"));
     }
 
     #[test]
     fn local_chto_takoe_blocks() {
-        assert!(!Surfer::needs_internet_pub("что такое машинное обучение"));
+        assert!(!Surfer::needs_internet_pub("explain machine learning"));
     }
 
     #[test]
     fn local_napishi_blocks() {
-        assert!(!Surfer::needs_internet_pub("напиши мне функцию на python"));
+        assert!(!Surfer::needs_internet_pub("write me a python function"));
     }
 
     #[test]
     fn local_skolko_budet_blocks() {
-        assert!(!Surfer::needs_internet_pub("сколько будет 2+2"));
+        assert!(!Surfer::needs_internet_pub("calculate 2+2"));
     }
 
     #[test]
     fn local_objasnj_blocks() {
-        assert!(!Surfer::needs_internet_pub("объясни как работает TCP"));
+        assert!(!Surfer::needs_internet_pub("explain how TCP works"));
     }
 
     #[test]
     fn local_vremja_blocks() {
-        assert!(!Surfer::needs_internet_pub("который сейчас время"));
+        assert!(!Surfer::needs_internet_pub("remind me of the time"));
     }
 
     #[test]
     fn local_versija_blocks() {
-        assert!(!Surfer::needs_internet_pub("версия rust у меня"));
+        assert!(!Surfer::needs_internet_pub("my version of rust"));
     }
 
     #[test]
     fn local_primer_blocks() {
-        assert!(!Surfer::needs_internet_pub("покажи пример сортировки"));
+        assert!(!Surfer::needs_internet_pub("show me an example of sorting"));
     }
 
     // ── needs_internet: force online ─────────────────────────────────────────
 
     #[test]
-    fn online_novosti_forces() {
-        assert!(Surfer::needs_internet_pub("последние новости сегодня"));
+    fn online_news_forces() {
+        assert!(Surfer::needs_internet_pub("latest news today"));
     }
 
     #[test]
-    fn online_kurs_forces() {
-        assert!(Surfer::needs_internet_pub("курс доллара к рублю"));
+    fn online_exchange_rate_forces() {
+        assert!(Surfer::needs_internet_pub("dollar exchange rate"));
     }
 
     #[test]
-    fn online_pogoda_forces() {
-        assert!(Surfer::needs_internet_pub("погода в москве завтра"));
+    fn online_weather_forces() {
+        assert!(Surfer::needs_internet_pub("weather in london tomorrow"));
     }
 
     #[test]
-    fn online_bitkoin_forces() {
-        assert!(Surfer::needs_internet_pub("цена биткоина сейчас"));
+    fn online_bitcoin_forces() {
+        assert!(Surfer::needs_internet_pub("bitcoin price right now"));
     }
 
     #[test]
     fn online_openai_forces() {
-        assert!(Surfer::needs_internet_pub("openai новая модель"));
+        assert!(Surfer::needs_internet_pub("openai new model"));
     }
 
     #[test]
-    fn online_nvidia_forces() {
-        assert!(Surfer::needs_internet_pub("акции nvidia упали"));
+    fn online_stock_forces() {
+        assert!(Surfer::needs_internet_pub("nvidia stock fell"));
     }
 
     #[test]
-    fn online_naselenie_forces() {
-        assert!(Surfer::needs_internet_pub("население земли сколько человек"));
+    fn online_population_forces() {
+        assert!(Surfer::needs_internet_pub("population of the earth how many people"));
     }
 
     #[test]
-    fn online_stoimost_forces() {
-        assert!(Surfer::needs_internet_pub("сколько стоит iphone 16"));
+    fn online_cost_forces() {
+        assert!(Surfer::needs_internet_pub("how much does an iphone 16 cost"));
     }
 
     #[test]
-    fn online_rekord_forces() {
-        assert!(Surfer::needs_internet_pub("мировой рекорд в плавании"));
+    fn online_record_forces() {
+        assert!(Surfer::needs_internet_pub("world record in swimming"));
     }
 
     #[test]
-    fn online_kogda_rodilsja_forces() {
-        assert!(Surfer::needs_internet_pub("когда родился пушкин"));
+    fn online_when_born_forces() {
+        assert!(Surfer::needs_internet_pub("when was pushkin born"));
     }
 
     #[test]
-    fn online_kto_takoi_forces() {
-        assert!(Surfer::needs_internet_pub("кто такой илон маск"));
+    fn online_who_is_forces() {
+        assert!(Surfer::needs_internet_pub("who is elon musk"));
     }
 
     #[test]
-    fn online_iz_anime_forces() {
-        assert!(Surfer::needs_internet_pub("персонаж из аниме наруто"));
+    fn online_when_did_forces() {
+        assert!(Surfer::needs_internet_pub("when did the second world war start"));
     }
 
     #[test]
-    fn online_kogda_nachalas_forces() {
-        assert!(Surfer::needs_internet_pub("когда началась вторая мировая война"));
+    fn online_who_wrote_forces() {
+        assert!(Surfer::needs_internet_pub("who wrote war and peace"));
     }
 
     #[test]
-    fn online_tochnie_dannye_forces() {
-        assert!(Surfer::needs_internet_pub("точные данные по инфляции"));
-    }
-
-    #[test]
-    fn online_uточni_forces() {
-        assert!(Surfer::needs_internet_pub("уточни данные о населении"));
-    }
-
-    #[test]
-    fn online_kto_napisal_forces() {
-        assert!(Surfer::needs_internet_pub("кто написал войну и мир"));
-    }
-
-    #[test]
-    fn online_chto_za_forces() {
-        assert!(Surfer::needs_internet_pub("что за компания palantir"));
+    fn online_explicit_search_forces() {
+        assert!(Surfer::needs_internet_pub("look up palantir on the internet"));
     }
 
     // ── needs_internet: no trigger → false ───────────────────────────────────
 
     #[test]
     fn no_trigger_general_question_false() {
-        assert!(!Surfer::needs_internet_pub("расскажи про гравитацию"));
+        assert!(!Surfer::needs_internet_pub("explain gravity"));
     }
 
     #[test]
@@ -589,30 +539,30 @@ mod tests {
 
     #[test]
     fn no_trigger_greeting_false() {
-        assert!(!Surfer::needs_internet_pub("привет как дела"));
+        assert!(!Surfer::needs_internet_pub("hi how are you"));
     }
 
     // ── needs_internet: negation beats force_online ───────────────────────────
 
     #[test]
     fn negation_beats_force_online() {
-        // "новости" would normally trigger online, but "без интернет" blocks first
+        // "news" would normally trigger online, but "no internet" blocks first
         // Depends on evaluation order: negation checked first → false
-        assert!(!Surfer::needs_internet_pub("новости без интернета"));
+        assert!(!Surfer::needs_internet_pub("news without internet"));
     }
 
     #[test]
     fn negation_beats_force_online_2() {
-        assert!(!Surfer::needs_internet_pub("погода оффлайн"));
+        assert!(!Surfer::needs_internet_pub("weather offline"));
     }
 
     // ── needs_internet: local beats force_online ──────────────────────────────
 
     #[test]
-    fn local_sегодня_interaction() {
-        // "сегодня" is a force_online keyword, but "версия" is local_only
-        // "сегодня версия" → local_only fires first → false
-        assert!(!Surfer::needs_internet_pub("сегодня версия программы"));
+    fn local_only_beats_force_online() {
+        // "today" is a force_online keyword, but "my version" is local_only
+        // both present → local_only fires first → false
+        assert!(!Surfer::needs_internet_pub("my version of the app today"));
     }
 
     // ── fetch_snippets_sync: result is a string (network not required to not panic) ─
@@ -628,7 +578,7 @@ mod tests {
 
     #[test]
     fn fetch_snippets_sync_does_not_panic_on_long_query() {
-        let long_q = "а".repeat(500);
+        let long_q = "a".repeat(500);
         let result = std::panic::catch_unwind(|| {
             fetch_snippets_sync(&long_q)
         });
@@ -684,7 +634,7 @@ mod tests {
           <a class="result__a" href="https://example.com">Good</a>
           <div class="result__snippet">good snippet</div>
         </div>"#;
-        let txt = results_to_snippets(&parse_ddg_html(html, "погода")); // does not ask for VK
+        let txt = results_to_snippets(&parse_ddg_html(html, "weather")); // does not ask for VK
         assert!(!txt.contains("VK Page"));
         assert!(txt.contains("Good"));
     }
@@ -696,7 +646,7 @@ mod tests {
           <a class="result__a" href="https://vk.com/foo">VK Page</a>
           <div class="result__snippet">vk snippet</div>
         </div>"#;
-        let txt = results_to_snippets(&parse_ddg_html(html, "найди вконтакте foo"));
+        let txt = results_to_snippets(&parse_ddg_html(html, "find foo on vk"));
         assert!(txt.contains("VK Page"));
     }
 

@@ -235,16 +235,16 @@ mod tests {
 
     #[test]
     fn sse_cyrillic_content_preserved() {
-        let line = r#"{"content":"Привет","stop":false}"#;
+        let line = r#"{"content":"Hello","stop":false}"#;
         let (tok, _) = parse_sse_line(line).unwrap();
-        assert_eq!(tok, "Привет");
+        assert_eq!(tok, "Hello");
     }
 
     #[test]
     fn sse_content_with_spaces() {
-        let line = r#"{"content":" токен ","stop":false}"#;
+        let line = r#"{"content":" token ","stop":false}"#;
         let (tok, _) = parse_sse_line(line).unwrap();
-        assert_eq!(tok, " токен ");
+        assert_eq!(tok, " token ");
     }
 
     #[test]

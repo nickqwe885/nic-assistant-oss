@@ -10,24 +10,43 @@
 /// conversational sentence that merely contains a verb is never rewritten.
 const COMMAND_STARTS: &[&str] = &[
     "open ", "show ", "launch ", "run ", "start ", "go to ", "play ", "put on ", "watch ",
-    "включи ", "открой ", "запусти ", "покажи ", "зайди на ", "поставь ", "посмотреть ",
+    "turn on ", "turn ", "search ", "find ", "google ", "look up ",
 ];
 
+/// Possessives: "turn HIS last video", "search HER channel". These bind to the
+/// noun that follows, so unlike a bare object pronoun they can sit anywhere in
+/// the command and still refer back.
+const POSSESSIVES: &[&str] = &["his", "her", "its", "their"];
+
 /// Words that link a command verb to its object ("video about him").
-const CONNECTORS: &[&str] = &["about", "of", "by", "from", "with", "про", "о", "об", "обо"];
+const CONNECTORS: &[&str] = &["about", "of", "by", "from", "with"];
 
 /// Pronouns we resolve. Deliberately narrow: subject/quantity words like
 /// "there", "they", "these", "more" stay with the QA follow-up logic.
 const PRONOUNS: &[&str] = &[
     "him", "her", "them", "it", "his", "its", "their", "this", "that",
     // Legacy Russian (harmless when RU is never typed).
-    "него", "неё", "нее", "ней", "нём", "нем", "них", "его", "её", "ее", "их",
 ];
 
 /// Rewrite `query` with the pronoun replaced by the previous question's
 /// referent. `None` = not a command / no pronoun / no safe referent — caller
 /// keeps the original query and nothing changes.
 pub fn resolve(query: &str, prev_q: &str) -> Option<String> {
+    let referent = referent_of(prev_q)?;
+    resolve_with(query, &referent)
+}
+
+/// Same gate, but the referent is supplied directly — used when the caller already
+/// knows who is being discussed (and can enrich the name with what the user told
+/// us: "LenS dota 2 player" instead of the ambiguous "lens").
+pub fn resolve_with(query: &str, referent: &str) -> Option<String> {
+    if referent.trim().is_empty() {
+        return None;
+    }
+    resolve_inner(query, referent)
+}
+
+fn resolve_inner(query: &str, referent: &str) -> Option<String> {
     let q_trim = query.trim();
     let q_lower = q_trim.to_lowercase();
     if !COMMAND_STARTS.iter().any(|p| q_lower.starts_with(p)) {
@@ -41,14 +60,17 @@ pub fn resolve(query: &str, prev_q: &str) -> Option<String> {
         .collect();
 
     // A pronoun counts as the command's object when it follows a connector
-    // ("about him") or closes the query ("play her").
+    // ("about him"), closes the query ("play her"), or is a POSSESSIVE binding to
+    // the noun after it ("turn his last video" → "turn <name> last video").
     let idx = lower.iter().enumerate().find_map(|(i, lw)| {
         if !PRONOUNS.contains(&lw.as_str()) {
             return None;
         }
         let after_connector = i > 0 && CONNECTORS.contains(&lower[i - 1].as_str());
         let is_last = i == lower.len() - 1;
-        (after_connector || is_last).then_some(i)
+        // A possessive needs a noun after it, else "play his" is just a bare object.
+        let is_possessive = POSSESSIVES.contains(&lw.as_str()) && i + 1 < lower.len();
+        (after_connector || is_last || is_possessive).then_some(i)
     })?;
 
     // Bare trailing "it/this/that" ("play it", "watch that") usually means the
@@ -60,9 +82,8 @@ pub fn resolve(query: &str, prev_q: &str) -> Option<String> {
         return None;
     }
 
-    let referent = referent_of(prev_q)?;
     let mut out: Vec<String> = words.iter().map(|w| w.to_string()).collect();
-    out[idx] = referent;
+    out[idx] = referent.to_string();
     Some(out.join(" "))
 }
 
@@ -80,8 +101,6 @@ fn referent_of(prev_q: &str) -> Option<String> {
         "what is ", "what was ", "what's ", "what are ",
         "tell me more about ", "tell me about ", "tell about ",
         "explain ", "describe ", "define ",
-        "кто такой ", "кто такая ", "кто такие ", "что такое ",
-        "расскажи мне про ", "расскажи мне о ", "расскажи про ", "расскажи о ",
     ];
 
     let mut cand: Option<String> = None;
@@ -123,11 +142,19 @@ fn referent_of(prev_q: &str) -> Option<String> {
     if n_chars < 2 || n_chars > 60 || toks.len() > 6 {
         return None;
     }
-    // The previous question must actually name something — a pronoun referring
-    // to a pronoun resolves nothing.
-    if PRONOUNS.contains(&jl.as_str())
-        || matches!(jl.as_str(), "he" | "she" | "they" | "you" | "i" | "we" | "он" | "она" | "они")
-    {
+    // The previous question must actually NAME something. Two ways it fails:
+    //
+    //  a) the whole referent is itself a pronoun ("who is he");
+    //  b) it STARTS with a pronoun — "What was I just doing?" strips to "I just
+    //     doing", which shipped as «open video about I just doing». A question
+    //     about the user is not an entity to refer back to.
+    const NON_ENTITY_LEADS: &[&str] = &[
+        "i", "you", "he", "she", "we", "they", "it", "me", "my", "your", "his",
+        "her", "our", "their", "this", "that", "these", "those",
+    ];
+    let first = toks[0].to_lowercase();
+    let first = first.trim_matches(|c: char| !c.is_alphanumeric());
+    if PRONOUNS.contains(&jl.as_str()) || NON_ENTITY_LEADS.contains(&first) {
         return None;
     }
     Some(joined)
@@ -202,10 +229,10 @@ mod tests {
     }
 
     #[test]
-    fn resolves_russian_command() {
+    fn resolves_search_command() {
         assert_eq!(
-            resolve("открой видео про него", "кто такой Хабиб"),
-            Some("открой видео про Хабиб".to_string())
+            resolve("search for a video about him", "who is Khabib"),
+            Some("search for a video about Khabib".to_string())
         );
     }
 
@@ -228,5 +255,31 @@ mod tests {
     fn pronoun_previous_question_gives_nothing() {
         assert_eq!(resolve("open video about him", "who is he"), None);
         assert_eq!(resolve("open video about him", "hmm ok"), None);
+    }
+
+    #[test]
+    fn possessive_resolves_mid_command() {
+        // Live: "who is Bulkin" → "turn his last video" wasn't understood as a
+        // command at all and the model rambled about YouTube being a platform.
+        assert_eq!(
+            resolve("turn his last video", "who is Bulkin"),
+            Some("turn Bulkin last video".to_string())
+        );
+        assert_eq!(
+            resolve("search his yt chanel", "who is Bulkin"),
+            Some("search Bulkin yt chanel".to_string())
+        );
+        assert_eq!(
+            resolve("find her new song", "who is Adele"),
+            Some("find Adele new song".to_string())
+        );
+    }
+
+    #[test]
+    fn a_question_about_the_user_is_not_a_referent() {
+        // Shipped bug: this produced «Playing "video about i just doing" on YouTube».
+        assert_eq!(resolve("open video about him", "What was I just doing?"), None);
+        assert_eq!(resolve("play her", "what did I do today"), None);
+        assert_eq!(resolve("open video about him", "what is my name"), None);
     }
 }

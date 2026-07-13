@@ -90,7 +90,7 @@ impl ContextCollector {
         let surfer    = self.surfer.clone();
         let q         = query.to_string();
         // Activity-recall questions ("what did I do / what happened") must answer
-        // from the screen timeline only — skip the web so an empty «Из интернета»
+        // from the screen timeline only — skip the web so an empty "Web results"
         // section can't distract the model into "nothing found online".
         let skip_web  = offline || crate::librarian::is_activity_recall(&q);
 
@@ -183,8 +183,8 @@ fn strip_internal_markers(s: &str) -> String {
     s.lines()
         .filter(|l| !l.trim_start().starts_with("##"))
         .map(|l| l.replace("SCREEN ", "")
-                  .replace("(уровень 1+)", "")
-                  .replace("уровень 1+", ""))
+                  .replace("(level 1+)", "")
+                  .replace("level 1+", ""))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -265,8 +265,8 @@ mod tests {
 
     #[test]
     fn ocr_keeps_cyrillic() {
-        let r = clean_ocr_noise("Привет мир");
-        assert_eq!(r, "Привет мир");
+        let r = clean_ocr_noise("Hello world");
+        assert_eq!(r, "Hello world");
     }
 
     #[test]
@@ -277,8 +277,8 @@ mod tests {
 
     #[test]
     fn ocr_keeps_digits() {
-        let r = clean_ocr_noise("42 ответа");
-        assert_eq!(r, "42 ответа");
+        let r = clean_ocr_noise("42 answers");
+        assert_eq!(r, "42 answers");
     }
 
     #[test]
@@ -289,17 +289,17 @@ mod tests {
 
     #[test]
     fn ocr_removes_noise_chars() {
-        let r = clean_ocr_noise("Привет\u{2022}мир\u{00B0}тест"); // • and °
+        let r = clean_ocr_noise("Hello\u{2022}world\u{00B0}test"); // • and °
         assert!(!r.contains('\u{2022}'), "bullet should be removed");
         assert!(!r.contains('\u{00B0}'), "degree symbol should be removed");
-        assert!(r.contains("Привет"));
-        assert!(r.contains("мир"));
-        assert!(r.contains("тест"));
+        assert!(r.contains("Hello"));
+        assert!(r.contains("world"));
+        assert!(r.contains("test"));
     }
 
     #[test]
     fn ocr_removes_box_drawing_chars() {
-        let r = clean_ocr_noise("код\u{2502}значение"); // │
+        let r = clean_ocr_noise("key\u{2502}value"); // │
         assert!(!r.contains('\u{2502}'));
     }
 
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn ocr_keeps_newline_tab() {
-        let r = clean_ocr_noise("строка1\nстрока2\tтаб");
+        let r = clean_ocr_noise("line1\nline2\ttab");
         assert!(r.contains('\n'));
         assert!(r.contains('\t'));
     }
@@ -366,8 +366,8 @@ mod tests {
 
     #[test]
     fn conflicts_no_digits_in_either_returns_none() {
-        let lib = "машинное обучение это технология";
-        let web = "машинное обучение это наука";
+        let lib = "machine learning is a technology";
+        let web = "machine learning is a science";
         // No digit-containing tokens → no key_facts → no conflicts
         assert!(detect_conflicts(lib, web).is_none());
     }
