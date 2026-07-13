@@ -1,0 +1,29 @@
+# Build outputs
+/target/
+/tauri-ui/src-tauri/target/
+/launcher-tauri/src-tauri/target/
+/tauri-ui/dist/
+/dist/
+
+# Binary release folders and archives
+/release/
+/release-beta/
+/release-closed/
+/*.zip
+/*.7z
+
+# Runtime state
+/data/
+/logs/
+/**/*.WebView2/
+
+# Local models and bundled third-party binaries
+/models/
+/llama/
+
+# Local/editor noise
+/.claude/
+*.log
+*.pdb
+*.d
+*.bak

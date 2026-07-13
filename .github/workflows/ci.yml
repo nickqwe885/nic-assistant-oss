@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Build & test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check (all targets)
+        run: cargo check --all-targets
+
+      - name: Clippy (warnings only, never blocks)
+        run: cargo clippy --all-targets
+        continue-on-error: true
+
+      - name: Test
+        run: cargo test --lib
+
+      - name: Release build
+        run: cargo build --release

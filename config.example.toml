@@ -1,0 +1,112 @@
+# nic-assistant — example configuration
+# Copy to config.toml and adjust before first run.
+# All values shown are the built-in defaults.
+# config.toml is optional — the assistant works out of the box without it.
+
+[models]
+# Path to llama-server.exe — downloaded automatically on first run.
+server_bin = "llama/llama-server.exe"
+
+# Path to the GGUF model file — downloaded automatically on first run.
+model_path = "models/main.gguf"
+
+# Model download URL (HuggingFace). Change to use a different model.
+model_url = "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+
+# Port for the internal llama-server API.
+server_port = 8090
+
+# GPU layers: -1 = all layers on GPU (auto-detected), 0 = CPU only.
+n_gpu_layers = -1
+
+# Context window size in tokens.
+ctx_size = 4096
+
+# Parallel inference slots (Surfer + Thinker).
+parallel = 2
+
+# Path to the all-MiniLM-L6-v2 sentence-embedding model directory.
+embedder_dir = "models/all-MiniLM-L6-v2"
+
+[capture]
+# Seconds between screen captures when the user is active.
+active_interval_secs = 3
+
+# Seconds between captures when no activity is detected.
+idle_interval_secs = 20
+
+# Seconds of inactivity before switching to idle capture interval.
+idle_after_secs = 30
+
+# Dirty-rectangle threshold: fraction of 64x64 blocks that must change.
+dirty_rect_threshold = 0.05
+
+# pHash Hamming distance below which two frames are considered identical.
+phash_hamming_threshold = 5
+
+# Window titles containing any of these strings will NOT be captured.
+privacy_blacklist = [
+    "bank", "password", "incognito", "private browsing",
+    "1password", "bitwarden", "keepass", "lastpass", "dashlane"
+]
+
+# Clipboard text containing any of these strings will NOT be stored.
+clip_blacklist = ["password", "bank", "secret", "private key", "seed phrase"]
+
+[librarian]
+# Directory for the LanceDB hot database.
+db_path = "data/lancedb"
+
+# Directory for the NDJSON cold-storage archive.
+archive_path = "data/archive"
+
+# Number of text->embedding pairs to keep in the in-memory LRU cache.
+embed_cache_size = 100
+
+# Hard timeout (seconds) for the Surfer web search.
+surfer_timeout_secs = 10
+
+# Hard timeout (seconds) for a single LLM generation call.
+llm_timeout_secs = 30
+
+# Hard timeout (seconds) for a LanceDB vector-search query.
+search_timeout_secs = 5
+
+# Seconds of user inactivity before Deep Miner triggers background compression.
+deep_miner_idle_secs = 1800
+
+# Hours after which raw screen events are pruned from the hot database.
+l0_ttl_hours = 72
+
+[adaptive]
+# Time of daily summary generation, format "HH:MM".
+summary_time = "18:00"
+
+# true = Sentinel does not store screen/clipboard activity.
+incognito_mode = false
+
+# CPU usage threshold (%) above which Thinker pauses inference.
+cpu_limit_pct = 90.0
+
+[security]
+# Enable AES-256-GCM encryption for cold-storage archive files.
+encrypt_archives = false
+
+# Path for the auto-generated encryption key (base64-encoded, 32 bytes).
+key_file = "data/.nic_key"
+
+# API key for non-localhost requests. Leave empty to disable.
+api_key = ""
+
+[profile]
+# Your display name — injected into every answer for personalisation.
+name = ""
+
+# Your role, e.g. "Senior Rust developer"
+role = ""
+
+# Active projects, e.g. ["NIC-Assistant", "my-startup"]
+projects = []
+
+# Answer style preferences, e.g. "Краткие технические ответы на русском"
+preferences = ""

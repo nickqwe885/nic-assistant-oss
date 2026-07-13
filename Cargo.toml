@@ -1,0 +1,110 @@
+[package]
+name = "nic-assistant"
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"   # open core; see LICENSE + LICENSING.md (dual-license, §6.1)
+
+[[bin]]
+name = "NIC-Assistant"
+path = "src/bin/launcher.rs"
+
+[lib]
+name = "nic_assistant_lib"
+path = "src/lib.rs"
+
+[features]
+default = []
+cuda   = ["candle-core/cuda",   "candle-nn/cuda",   "candle-transformers/cuda"]
+metal  = ["candle-core/metal",  "candle-nn/metal",  "candle-transformers/metal"]
+
+[dependencies]
+tokio = { version = "1.51", features = ["full"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+zip     = "2"
+ureq    = "2"
+scraper = "0.17"
+urlencoding = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.23", features = ["v4"] }
+regex = "1.12"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+candle-core = { version = "0.10.2" }
+candle-nn = { version = "0.10.2" }
+candle-transformers = { version = "0.10.2" }
+tokenizers = "0.22.2"
+
+screenshots = "0.8"
+image = "0.24"
+sysinfo = "0.33"
+
+lancedb = "0.27.2"
+arrow = "57.3.0"
+arrow-array = "57.3.0"
+arrow-schema = "57.3.0"
+
+arboard = "3.4"
+axum = { version = "0.8", features = ["json"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+
+thiserror  = "2.0"
+lru        = "0.12"
+aes-gcm    = "0.10"
+base64     = "0.22"
+toml       = "0.8"
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+notify-rust  = { version = "4", features = ["d"] }
+zstd             = "0.13"
+tracing-appender = "0.2"
+rfd              = "0.15"   # native file dialog for BYO-GGUF picker (MASTER_PLAN §5)
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Media_Ocr",
+    "Graphics_Imaging",
+    "Win32_System_WinRT",
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dxgi",
+    "Win32_System_JobObjects",
+    "Win32_Security",
+    "Win32_UI_Shell",
+] }
+winreg    = "0.52"
+tao       = "0.29"
+wry       = "0.46"
+tray-icon = "0.23"
+
+[profile.dev]
+opt-level   = 0
+debug       = true
+incremental = false
+
+[profile.dev.package.candle-core]
+opt-level = 3
+[profile.dev.package.candle-nn]
+opt-level = 3
+[profile.dev.package.candle-transformers]
+opt-level = 3
+[profile.dev.package.tokenizers]
+opt-level = 3
+
+[profile.release]
+opt-level       = 3
+lto             = "off"
+codegen-units   = 16
+panic           = "abort"
+strip           = "symbols"
+
+[profile.bench]
+inherits        = "release"
+strip           = "none"
+debug           = 1

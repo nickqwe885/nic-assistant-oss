@@ -1,0 +1,54 @@
+[models]
+# Selected model. Must match one of the `presets[*].id` values below.
+# Changing this triggers a re-download on the next start.
+selected_model = "qwen-1.5b"
+
+# Where to run the model:
+#   "auto" — detect a GPU and use it if available (default)
+#   "gpu"  — always use the GPU
+#   "cpu"  — always use the CPU (pick this if the GPU is busy with games,
+#            or your integrated GPU can't run the model well)
+compute = "auto"
+
+# Available model presets. The user picks one from the UI; the chosen preset
+# is downloaded from HuggingFace on first use and cached on disk.
+[[models.presets]]
+id          = "qwen-0.5b"
+name        = "Qwen 2.5 0.5B Instruct"
+repo        = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+file        = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+size_mb     = 500
+description = "Ultra-light. Fast on any CPU, weak reasoning."
+
+[[models.presets]]
+id          = "qwen-1.5b"
+name        = "Qwen 2.5 1.5B Instruct"
+repo        = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+file        = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+size_mb     = 1100
+description = "Balanced default. Good quality, runs on most laptops."
+
+[[models.presets]]
+id          = "qwen-3b"
+name        = "Qwen 2.5 3B Instruct"
+repo        = "Qwen/Qwen2.5-3B-Instruct-GGUF"
+file        = "qwen2.5-3b-instruct-q4_k_m.gguf"
+size_mb     = 2000
+description = "Best quality. Needs 6+ GB RAM or any modern GPU."
+
+[[models.presets]]
+id          = "llama-3.2-3b"
+name        = "Llama 3.2 3B Instruct"
+repo        = "bartowski/Llama-3.2-3B-Instruct-GGUF"
+file        = "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+size_mb     = 2000
+description = "Meta's 3B. Multilingual, strong at code & chat."
+
+[adaptive]
+summary_time  = "18:00"
+incognito_mode = false
+cpu_limit_pct  = 90.0
+# Language defaults to English (no OS auto-detection). Set explicitly to opt in
+# to a localized UI, e.g. language = "Russian". City is auto-detected if empty.
+# language = "English"
+# city     = "Астана"
