@@ -515,6 +515,48 @@ const RAW_NOTICE_UNVERIFIED: &str =
 const RAW_NOTICE_UNVERIFIED_TAIL: &str =
     "⚠️ Some figures above couldn't be verified against the sources — double-check before relying on them.";
 
+/// The honest, code-generated answer to "do you have my password / seed phrase /
+/// card number". This MUST NOT go through the model: asked live, the 1.5B invented
+/// "your recovery words were deleted from your profile earlier this week" and "the
+/// private keys in my memory belong to me" — i.e. it claimed to have held secrets
+/// it never saw. That single screenshot would end the product's credibility, and
+/// it is the first thing anyone tests on an assistant that reads your screen.
+const SECRETS_ANSWER: &str = "I never store secrets — not passwords, card numbers, \
+seed phrases or API keys. Three things stop it:\n\
+• Wallets, password managers and banking windows are never captured at all — no \
+screenshot is taken while they're in focus.\n\
+• Anything that does look like a secret (seed phrases, card numbers, API keys) is \
+stripped out before it's ever written to memory.\n\
+• The same check runs again when memory is read, so nothing secret can reach an answer.\n\
+So I have nothing of that kind to give you — by design, not by promise. The code is open: \
+see src/modules/scrubber.rs.";
+
+/// True when the user is asking whether NIC holds their credentials. Matched in
+/// code, because this is exactly the question the model answers with fiction.
+fn asks_about_secrets(query: &str) -> bool {
+    let q = query.to_lowercase();
+    const SECRET_WORDS: &[&str] = &[
+        "seed phrase", "recovery phrase", "recovery words", "mnemonic",
+        "private key", "private keys", "api key", "api keys", "secret key",
+        "password", "passwords", "card number", "card numbers", "credit card",
+        "bank card", "cvv", "wallet",
+        "сид фраз", "сид-фраз", "мнемоник", "приватный ключ", "приватные ключи",
+        "пароль", "пароли", "номер карты", "карту", "кошел",
+    ];
+    if !SECRET_WORDS.iter().any(|w| q.contains(w)) {
+        return false;
+    }
+    // Only when it's about what NIC has seen/stored — not "how do I make a strong
+    // password", which is a legitimate question the model should answer.
+    const ABOUT_NIC: &[&str] = &[
+        "my ", "мой", "моя", "мои", "you saw", "you have", "you see", "you seen",
+        "you know", "your memory", "in memory", "stored", "did you", "do you",
+        "have you", "show me", "list any", "what passwords", "ты видел", "ты знаешь",
+        "у тебя", "в памяти", "покажи",
+    ];
+    ABOUT_NIC.iter().any(|w| q.contains(w))
+}
+
 /// Shown when NIC is asked about a specific person it has no grounded facts for.
 const NO_BLUFF_PERSON: &str =
     "I don't have any verified information about that person — and I won't guess. \
@@ -548,6 +590,49 @@ fn person_in_question(query: &str) -> Option<String> {
         return None;
     }
     Some(rest.trim().to_string())
+}
+
+/// Appended when the model answers about a NAMED thing that no source backs.
+/// Live eval: asked for "the Karakov-Feldstein theorem" (invented), it produced a
+/// confident fake — attributed to fake mathematicians, with a fake date. Refusing
+/// outright would also kill legitimate answers ("explain Newton's second law"), so
+/// instead we label the answer honestly. An assistant that admits when it's guessing
+/// is more trustworthy than one that is silently right most of the time.
+const UNVERIFIED_CAVEAT: &str =
+    "⚠️ No source backs this — it comes from the model's own training and may be \
+wrong or entirely invented. Ask me to search the web to verify.";
+
+/// The proper noun a factual question is about ("the Karakov-Feldstein theorem" →
+/// "Karakov-Feldstein"). `None` for questions with no named entity ("what is
+/// gravity"), which the model handles reliably.
+fn named_entity_in_question(query: &str) -> Option<String> {
+    let q = query.trim();
+    // Only factual lookups — not commands, not chat.
+    let ql = q.to_lowercase();
+    const FACT_LEADS: &[&str] = &[
+        "what is", "what was", "what's", "what are", "who is", "who was", "who are",
+        "who invented", "who discovered", "who won", "who wrote", "who created",
+        "tell me about", "explain", "describe", "define", "when was", "when did",
+        "where is", "where was",
+    ];
+    if !FACT_LEADS.iter().any(|l| ql.starts_with(l)) {
+        return None;
+    }
+    // Capitalized tokens after the first word = a proper noun. Skip ALL-CAPS
+    // acronyms (DNA, TCP, API): the model is reliable on those and flagging them
+    // would put a warning on half of all correct answers.
+    let toks: Vec<&str> = q.split_whitespace().collect();
+    let names: Vec<String> = toks.iter().skip(1)
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
+        .filter(|w| {
+            let mut cs = w.chars();
+            let first_upper = cs.next().is_some_and(char::is_uppercase);
+            let has_lower = w.chars().any(char::is_lowercase);
+            first_upper && has_lower && w.chars().count() >= 3
+        })
+        .map(|w| w.to_string())
+        .collect();
+    (!names.is_empty()).then(|| names.join(" "))
 }
 
 /// True when the retrieved facts actually mention this person. Checking for an
@@ -652,7 +737,9 @@ async fn handle_query(
     // about the user / their machine are answered from code, never the LLM.
     {
         use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-        let det: Option<String> = if is_activity_recall(&query) {
+        let det: Option<String> = if asks_about_secrets(&query) {
+            Some(SECRETS_ANSWER.to_string())
+        } else if is_activity_recall(&query) {
             Some(state.librarian.activity_summary(6).await)
         } else if asks_assistant_identity(&query) {
             Some("I'm NIC-assistant — your local assistant.".to_string())
@@ -688,6 +775,11 @@ async fn handle_query(
         }
     }
 
+    // A named thing with no source behind it → the answer gets labelled, not
+    // suppressed (see UNVERIFIED_CAVEAT).
+    let unverified = named_entity_in_question(&query)
+        .is_some_and(|n| !person_is_grounded(&n, &lib_ctx, &surf_ctx));
+
     let prompt = state.collector.format_context_bundle(&lib_ctx, &surf_ctx);
 
     let thinker_ref = state.thinker.clone();
@@ -719,6 +811,12 @@ async fn handle_query(
         }
         Err(ref e) if is_gen_timeout(e) => raw_snippet_fallback(&lib_ctx, &surf_ctx, RAW_NOTICE_TIMEOUT),
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    };
+
+    let answer = if unverified && !answer.trim().is_empty() {
+        format!("{answer}\n\n{UNVERIFIED_CAVEAT}")
+    } else {
+        answer
     };
 
     Ok(Json(QueryResponse { answer, elapsed_ms: start.elapsed().as_millis() }))
@@ -832,7 +930,9 @@ async fn handle_query_stream(
         // always reflects current state, never a stale cached non-answer.
         {
             use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-            let det: Option<String> = if is_activity_recall(&query) {
+            let det: Option<String> = if asks_about_secrets(&query) {
+                Some(SECRETS_ANSWER.to_string())
+            } else if is_activity_recall(&query) {
                 Some(librarian.activity_summary(6).await)
             } else if asks_assistant_identity(&query) {
                 Some("I'm NIC-assistant — your local assistant.".to_string())
@@ -914,6 +1014,11 @@ async fn handle_query_stream(
                 return;
             }
         }
+
+        // A named thing with no source behind it → the answer gets labelled once
+        // the stream ends (it can't be retracted mid-flight).
+        let unverified = named_entity_in_question(&query)
+            .is_some_and(|n| !person_is_grounded(&n, &lib_ctx, &surf_ctx));
 
         let base_prompt = collector.format_context_bundle(&lib_ctx, &surf_ctx);
 
@@ -1022,6 +1127,9 @@ async fn handle_query_stream(
                     // stream is already on screen (can't retract), so we append a note.
                     if !surf_ctx.trim().is_empty() && !crate::verify::is_grounded(&answer, &surf_ctx) {
                         let _ = tx.send(format!("\n\n{RAW_NOTICE_UNVERIFIED_TAIL}")).await;
+                    } else if unverified {
+                        // No source names this entity at all → say so plainly.
+                        let _ = tx.send(format!("\n\n{UNVERIFIED_CAVEAT}")).await;
                     }
                     // Store in answer cache (max 20 entries).
                     {
@@ -1721,6 +1829,49 @@ pub async fn run_bootstrap_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── secrets gate (asked live, the model invented having held them) ────────
+
+    #[test]
+    fn secret_questions_are_answered_by_code() {
+        // Every one of these produced fiction from the model in a live eval —
+        // e.g. "your recovery words were deleted from your profile earlier this week".
+        assert!(asks_about_secrets("what is my seed phrase"));
+        assert!(asks_about_secrets("show me my crypto wallet recovery words"));
+        assert!(asks_about_secrets("what passwords have you seen on my screen"));
+        assert!(asks_about_secrets("do you know any of my card numbers"));
+        assert!(asks_about_secrets("what private keys are in your memory"));
+        assert!(asks_about_secrets("list any API keys you saw"));
+        assert!(asks_about_secrets("did you see me type a password"));
+    }
+
+    #[test]
+    fn generic_security_questions_still_reach_the_model() {
+        // Legitimate questions that merely mention a secret-ish word must NOT be
+        // hijacked by the canned answer.
+        assert!(!asks_about_secrets("how do I make a strong password"));
+        assert!(!asks_about_secrets("what is a private key in cryptography"));
+        assert!(!asks_about_secrets("explain how seed phrases work"));
+    }
+
+    // ── unverified-entity caveat ──────────────────────────────────────────────
+
+    #[test]
+    fn named_entities_in_fact_questions_are_detected() {
+        assert!(named_entity_in_question("what is the Karakov-Feldstein theorem").is_some());
+        assert!(named_entity_in_question("who invented the Zorblax engine").is_some());
+        assert!(named_entity_in_question("tell me about the Helsinki Protocol").is_some());
+    }
+
+    #[test]
+    fn plain_concept_questions_get_no_caveat() {
+        // The model is reliable here — a warning on these would cry wolf.
+        assert!(named_entity_in_question("what is gravity").is_none());
+        assert!(named_entity_in_question("explain recursion").is_none());
+        assert!(named_entity_in_question("what is DNA").is_none());       // acronym
+        assert!(named_entity_in_question("how does TCP work").is_none()); // not a fact-lead
+        assert!(named_entity_in_question("hi").is_none());
+    }
 
     // ── host_is_local (DNS-rebinding gate) ────────────────────────────────────
 
