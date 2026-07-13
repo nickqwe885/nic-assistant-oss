@@ -123,7 +123,7 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
         if ql.starts_with(pat) {
             let v = rest_of(pat)?;
             let v = v.trim_start_matches("the ").trim_start_matches("a ").trim();
-            return Some(EntityUpdate::Fact(v.to_string()));
+            return Some(EntityUpdate::Fact(strip_trailing_command(v).to_string()));
         }
     }
     // A plain descriptor: "he is a dota 2 player", "she is a singer".
@@ -132,10 +132,68 @@ fn entity_statement(query: &str) -> Option<EntityUpdate> {
         if ql.starts_with(pat) {
             let v = rest_of(pat)?;
             let v = v.trim_start_matches("a ").trim_start_matches("an ").trim();
-            return Some(EntityUpdate::Fact(v.to_string()));
+            return Some(EntityUpdate::Fact(strip_trailing_command(v).to_string()));
         }
     }
     None
+}
+
+/// People teach and command in one breath: "he is dota 2 player and streamer
+/// find him". Live, the whole sentence went into memory as the fact, so every
+/// later search carried the words "find him" into the query. Keep the fact, drop
+/// the order.
+fn strip_trailing_command(fact: &str) -> &str {
+    const TAILS: &[&str] = &[
+        " find him", " find her", " find them", " find it", " find this",
+        " search him", " search her", " search them",
+        " search for him", " search for her", " search for them",
+        " look him up", " look her up", " look them up", " look it up",
+        " google him", " google her", " google them", " google it",
+        " look for him", " look for her", " look for them",
+    ];
+    let fl = fact.to_lowercase();
+    let end = TAILS.iter()
+        .filter_map(|t| fl.find(t))
+        .min()
+        .unwrap_or(fact.len());
+    // A cut can leave a dangling conjunction: "a streamer and" → "a streamer".
+    let mut s = fact[..end].trim().trim_end_matches([',', '.', '—', '-']).trim();
+    loop {
+        let low = s.to_lowercase();
+        let Some(last) = low.split_whitespace().next_back() else { break };
+        if !matches!(last, "and" | "then" | "so" | "now" | "also" | "plus" | "please") {
+            break;
+        }
+        s = s[..s.len() - last.len()].trim().trim_end_matches([',', '.']).trim();
+    }
+    s
+}
+
+/// The user asked us to go and LOOK for the person in the same breath as teaching
+/// us about them. Teaching alone is a dead end — "Got it" and nothing happens —
+/// when what they actually want is the answer.
+/// Prefix the answer with the confirmation of what we just learned, so a
+/// "teach + find" turn both acknowledges the fact and delivers the lookup.
+fn prefix_teach(teach: &Option<String>, answer: String) -> String {
+    match teach {
+        Some(m) => {
+            // Drop the "Try: play their last video" hint — we are about to do the
+            // lookup ourselves, so suggesting it back reads like a brush-off.
+            let confirm = m.split("\n\nTry:").next().unwrap_or(m).trim();
+            format!("{confirm}\n\nLooking them up…\n\n{answer}")
+        }
+        None => answer,
+    }
+}
+
+fn asks_to_find(query: &str) -> bool {
+    let q = query.to_lowercase();
+    [" find him", " find her", " find them", " search him", " search for him",
+     " search for her", " search for them", " look him up", " look her up",
+     " look them up", " google him", " google her", " google them",
+     " look for him", " look for her", " look for them", " search her",
+     " search them", " find it"]
+        .iter().any(|t| q.contains(t))
 }
 
 fn query_words(q: &str) -> HashSet<String> {
@@ -772,12 +830,11 @@ fn person_in_question(query: &str) -> Option<String> {
 fn about_subject(query: &str) -> Option<String> {
     let q = strip_openers(query.trim());
     let ql = q.to_lowercase();
+    // English-only beta (§9[1]) — no new Russian goes into the router.
     const ABOUT_LEADS: &[&str] = &[
         "tell me more about ", "tell me about ", "tell about ", "tell me smth about ",
         "what do you know about ", "what can you tell me about ", "do you know about ",
         "info about ", "information about ",
-        "расскажи мне про ", "расскажи про ", "расскажи о ", "расскажи об ",
-        "что ты знаешь о ", "что ты знаешь про ",
     ];
     // The lead can sit mid-sentence: "hi assistant could u tell me about donk".
     let (at, lead) = ABOUT_LEADS.iter()
@@ -794,9 +851,12 @@ fn about_subject(query: &str) -> Option<String> {
     let first = first.trim_matches(|c: char| !c.is_alphanumeric());
     // Self-reference and pronouns are not topics: "tell me about yourself" is a
     // persona question, "tell me about him" is a follow-up the QA path resolves.
-    if matches!(first, "you" | "yourself" | "your" | "me" | "myself" | "my" | "us" | "our"
-                     | "him" | "his" | "her" | "them" | "their" | "it" | "this" | "that"
-                     | "себя" | "тебе" | "мне" | "него" | "неё" | "нее") {
+    // People type "ur" and "u" — live, "could u tell me about ur political view"
+    // was refused as if "ur political view" were a stranger's name.
+    if matches!(first, "you" | "u" | "yourself" | "urself" | "your" | "ur" | "yours"
+                     | "me" | "myself" | "my" | "mine" | "us" | "our" | "we"
+                     | "him" | "his" | "her" | "hers" | "them" | "their" | "they"
+                     | "it" | "its" | "this" | "that") {
         return None;
     }
     let n = rest.split_whitespace().count();
@@ -963,12 +1023,16 @@ async fn handle_query(
 
     // Deterministic router (kept in sync with the streaming path): questions
     // about the user / their machine are answered from code, never the LLM.
+    // Teaching and ordering in one breath ("he is a dota 2 player, find him") —
+    // remember the fact, then actually go and look, instead of stopping at "Got it".
+    let taught = update_entity(&state.entity, &query, &state.librarian).await;
+    let lookup_after_teaching = taught.is_some() && asks_to_find(&query);
+    let teach_msg = if lookup_after_teaching { taught.clone() } else { None };
+
     {
         use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-        let det: Option<String> = if let Some(msg) =
-            update_entity(&state.entity, &query, &state.librarian).await
-        {
-            Some(msg)
+        let det: Option<String> = if let Some(msg) = taught {
+            if lookup_after_teaching { None } else { Some(msg) }
         } else if let Some(days) = report_request(&query) {
             Some(write_report(&state.librarian, &state.thinker, &state.language, days).await)
         } else if asks_about_secrets(&query) {
@@ -998,12 +1062,17 @@ async fn handle_query(
 
     // Track who is being discussed, then search for THEM — not for the sentence
     // they were mentioned in (mirrors the streaming path).
-    let subject = entity_in_question(&query);
+    let mut subject = entity_in_question(&query);
     if let Some(name) = &subject {
         let mut e = state.entity.lock().await;
         if e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(name)) {
             *e = Some(EntityCtx { name: name.clone(), facts: Vec::new() });
         }
+    }
+    // "…find him" names nobody, but the person we were just taught about IS the
+    // subject of that order.
+    if subject.is_none() && lookup_after_teaching {
+        subject = state.entity.lock().await.as_ref().map(|e| e.name.clone());
     }
     let collect_query = match state.entity.lock().await.as_ref() {
         Some(e) if subject.is_some() => e.search_term(),
@@ -1025,7 +1094,10 @@ async fn handle_query(
             } else {
                 no_bluff_subject_prompt(name)
             };
-            return Ok(Json(QueryResponse { answer, elapsed_ms: start.elapsed().as_millis() }));
+            return Ok(Json(QueryResponse {
+                answer:     prefix_teach(&teach_msg, answer),
+                elapsed_ms: start.elapsed().as_millis(),
+            }));
         }
     }
 
@@ -1046,7 +1118,13 @@ async fn handle_query(
 
     let thinker_ref = state.thinker.clone();
     let bundle_s    = prompt.clone();
-    let query_s     = query.clone();
+    // "he is a dota 2 player, find him" is an order, not a question — hand the model
+    // the question it is actually meant to answer.
+    let query_s     = if lookup_after_teaching {
+        format!("who is {collect_query}")
+    } else {
+        query.clone()
+    };
     let gen = tokio::task::spawn_blocking(move || {
         let mut t = thinker_ref.blocking_lock();
         t.answer(&bundle_s, &query_s)
@@ -1080,6 +1158,7 @@ async fn handle_query(
     } else {
         answer
     };
+    let answer = prefix_teach(&teach_msg, answer);
 
     Ok(Json(QueryResponse { answer, elapsed_ms: start.elapsed().as_millis() }))
 }
@@ -1203,12 +1282,21 @@ async fn handle_query_stream(
         // <famous person>". Composing the answer in code makes it identical and
         // reliable on ANY model size, and instant. Runs before the cache so it
         // always reflects current state, never a stale cached non-answer.
+        // "he is a dota 2 player and streamer, find him" both teaches AND orders. If
+        // we answer "Got it" and stop, the order is silently dropped — so remember
+        // the fact, confirm it, and then go on to actually look them up.
+        let taught = update_entity(&entity_ctx, &query, &librarian).await;
+        let lookup_after_teaching = taught.is_some() && asks_to_find(&query);
+
         {
             use crate::librarian::{asks_assistant_identity, asks_user_name, is_activity_recall};
-            let det: Option<String> = if let Some(msg) =
-                update_entity(&entity_ctx, &query, &librarian).await
-            {
-                Some(msg)
+            let det: Option<String> = if let Some(msg) = taught {
+                if lookup_after_teaching {
+                    let _ = tx.send(prefix_teach(&Some(msg), String::new())).await;
+                    None
+                } else {
+                    Some(msg)
+                }
             } else if let Some(days) = report_request(&query) {
                 Some(write_report(&librarian, &thinker, &language_for_report, days).await)
             } else if asks_about_secrets(&query) {
@@ -1283,7 +1371,7 @@ async fn handle_query_stream(
         // and so the user can teach us about them ("he is a dota 2 player"). This
         // has to happen BEFORE we go looking for facts: the subject is also what we
         // search WITH.
-        let subject = entity_in_question(&query);
+        let mut subject = entity_in_question(&query);
         if let Some(name) = &subject {
             let mut e = entity_ctx.lock().await;
             let changed = e.as_ref().is_none_or(|c| !c.name.eq_ignore_ascii_case(name));
@@ -1292,6 +1380,11 @@ async fn handle_query_stream(
             }
         }
         let entity_now = entity_ctx.lock().await.clone();
+        // "…find him" names nobody, but the person we were just taught about IS the
+        // subject of that order.
+        if subject.is_none() && lookup_after_teaching {
+            subject = entity_now.as_ref().map(|e| e.name.clone());
+        }
 
         // What we actually SEARCH with. Handing the web the raw sentence — "hi
         // assistant could u tell me about donk" — gets a conversational blob back,
@@ -1371,7 +1464,13 @@ async fn handle_query_stream(
 
         let thinker_ref = thinker.clone();
         let bundle_s    = prompt.clone();
-        let query_s     = query.clone();
+        // "he is a dota 2 player, find him" is an order, not a question — hand the
+        // model the question it is actually meant to answer.
+        let query_s     = if lookup_after_teaching {
+            format!("who is {collect_query}")
+        } else {
+            query.clone()
+        };
         let tx2         = tx.clone();
 
         let result = tokio::task::spawn_blocking(move || {
@@ -2461,6 +2560,29 @@ mod tests {
         assert!(about_subject("tell me about him").is_none());        // follow-up pronoun
         assert!(about_subject("tell me about my day").is_none());     // about the user
         assert!(about_subject("what is gravity").is_none());          // not an "about" lead
+        // Live: this was refused as though "ur political view" were a stranger's name.
+        assert!(about_subject("could u tell me about ur political view").is_none());
+        assert!(about_subject("tell me about your memory").is_none());
+    }
+
+    #[test]
+    fn a_taught_fact_never_swallows_the_order_that_followed_it() {
+        // Live: "he is dota 2 player and streamer find him" was stored whole, so every
+        // later search carried the words "find him" into the query.
+        let Some(EntityUpdate::Fact(f)) = entity_statement("he is dota 2 player and streamer find him")
+        else { panic!("not read as a fact") };
+        assert_eq!(f, "dota 2 player and streamer");
+
+        let Some(EntityUpdate::Fact(f)) = entity_statement("he is a singer, google him")
+        else { panic!("not read as a fact") };
+        assert_eq!(f, "singer");
+    }
+
+    #[test]
+    fn teaching_plus_an_order_triggers_the_lookup() {
+        assert!(asks_to_find("he is dota 2 player and streamer find him"));
+        assert!(asks_to_find("she is a singer, look her up"));
+        assert!(!asks_to_find("he is a dota 2 player"));
     }
 
     #[test]

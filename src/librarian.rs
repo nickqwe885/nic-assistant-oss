@@ -2219,12 +2219,21 @@ pub(crate) fn is_activity_recall(query: &str) -> bool {
      "что я открывал", "моя активность", "мою активность", "чем я занят",
      "в течение сесси", "за сессию", "за эту сессию", "что я тут делал",
      "что я делаю", "чем занят",
-     // English-only beta:
+     // English-only beta. Kept generous on purpose: the screen timeline is the one
+     // answer NIC is always right about, and a phrasing we fail to recognise gets
+     // handed to a 1.5B model instead — which is the worst possible trade. Every
+     // natural way of asking "what have I been up to" must land here.
      "what did i do", "what did i", "what was i doing", "what was i just",
-     "what have i been doing",
+     "what have i been doing", "what have i done", "what i did", "what i was doing",
+     "what i've been doing", "what ive been doing",
      "what did i open", "what did i watch", "what did i read", "what did i launch",
+     "what was i up to", "what have i been up to", "what am i doing",
+     "what was i working on", "what have i been working on", "what did i work on",
      "which apps", "which programs", "what apps", "what programs",
-     "what happened", "what was on screen", "what was on the screen", "my activity",
+     "what happened", "what was on screen", "what was on the screen",
+     "my activity", "my recent activity", "recent activity",
+     "my day", "my week", "my session", "my timeline", "my history",
+     "catch me up", "remind me what", "show me what i",
     ].iter().any(|&t| q.contains(t))
 }
 
